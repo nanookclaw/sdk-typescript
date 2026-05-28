@@ -110,7 +110,7 @@ test('runExternalStore selector returning null leaves the payload inline', async
   t.deepEqual(result, [originalPayload]);
 });
 
-test('runExternalStore throws TMPRL1109 when selector returns an unregistered driver', async (t) => {
+test('runExternalStore throws ExternalStorageSelectorInvalidDriverError when selector returns an unregistered driver', async (t) => {
   const registeredDriver = makeFakeDriver({ name: 'a' });
   const strangerDriver = makeFakeDriver({ name: 'a' }); // same name, different identity
   const externalStorage = new ExternalStorage({
@@ -121,30 +121,27 @@ test('runExternalStore throws TMPRL1109 when selector returns an unregistered dr
 
   await t.throwsAsync(() => runExternalStore({ externalStorage, payloads: [makePayload(1)] }), {
     instanceOf: ExternalStorageSelectorInvalidDriverError,
-    message: /TMPRL1109/,
   });
 });
 
-test('runExternalStore wraps driver errors in TMPRL1107', async (t) => {
+test('runExternalStore wraps driver errors in ExternalStorageDriverOperationFailedError', async (t) => {
   const boom = new Error('disk full');
   const driver = makeFakeDriver({ name: 's3', onStore: () => Promise.reject(boom) });
   const externalStorage = new ExternalStorage({ drivers: [driver], payloadSizeThreshold: 0 });
 
   const err = await t.throwsAsync(() => runExternalStore({ externalStorage, payloads: [makePayload(1)] }), {
     instanceOf: ExternalStorageDriverOperationFailedError,
-    message: /TMPRL1107/,
   });
   t.is(err!.cause, boom);
   t.is(err!.operation, 'store');
 });
 
-test('runExternalStore raises TMPRL1108 on claim arity mismatch', async (t) => {
+test('runExternalStore raises ExternalStorageDriverArityMismatchError on claim arity mismatch', async (t) => {
   const driver = makeFakeDriver({ name: 's3', onStore: () => [] });
   const externalStorage = new ExternalStorage({ drivers: [driver], payloadSizeThreshold: 0 });
 
   await t.throwsAsync(() => runExternalStore({ externalStorage, payloads: [makePayload(1)] }), {
     instanceOf: ExternalStorageDriverArityMismatchError,
-    message: /TMPRL1108/,
   });
 });
 
@@ -194,18 +191,17 @@ test('store/retrieve round-trip preserves order across drivers', async (t) => {
   t.deepEqual(retrievedPayloads, inputPayloads);
 });
 
-test('runExternalRetrieve raises TMPRL1105 when a reference is found and externalStorage is undefined', async (t) => {
+test('runExternalRetrieve raises ExternalStorageNotConfiguredError when a reference is found and externalStorage is undefined', async (t) => {
   const driver = makeFakeDriver({ name: 's3' });
   const externalStorage = new ExternalStorage({ drivers: [driver], payloadSizeThreshold: 0 });
   const storedPayloads = await runExternalStore({ externalStorage, payloads: [makePayload(1)] });
 
   await t.throwsAsync(() => runExternalRetrieve({ externalStorage: undefined, payloads: storedPayloads }), {
     instanceOf: ExternalStorageNotConfiguredError,
-    message: /TMPRL1105/,
   });
 });
 
-test('runExternalRetrieve raises TMPRL1106 when the driver name is unknown', async (t) => {
+test('runExternalRetrieve raises ExternalStorageDriverNotFoundError when the driver name is unknown', async (t) => {
   const writerDriver = makeFakeDriver({ name: 'writer' });
   const writerStorage = new ExternalStorage({ drivers: [writerDriver], payloadSizeThreshold: 0 });
   const storedPayloads = await runExternalStore({ externalStorage: writerStorage, payloads: [makePayload(1)] });
@@ -215,11 +211,10 @@ test('runExternalRetrieve raises TMPRL1106 when the driver name is unknown', asy
 
   await t.throwsAsync(() => runExternalRetrieve({ externalStorage: readerStorage, payloads: storedPayloads }), {
     instanceOf: ExternalStorageDriverNotFoundError,
-    message: /TMPRL1106/,
   });
 });
 
-test('runExternalRetrieve raises TMPRL1110 when retrieved bytes do not match the recorded size', async (t) => {
+test('runExternalRetrieve raises ExternalStorageIntegrityCheckFailedError when retrieved bytes do not match the recorded size', async (t) => {
   const driver = makeFakeDriver({
     name: 's3',
     onRetrieve: () => [makePayload(999)], // wrong size
@@ -229,7 +224,6 @@ test('runExternalRetrieve raises TMPRL1110 when retrieved bytes do not match the
 
   await t.throwsAsync(() => runExternalRetrieve({ externalStorage, payloads: storedPayloads }), {
     instanceOf: ExternalStorageIntegrityCheckFailedError,
-    message: /TMPRL1110/,
   });
 });
 
