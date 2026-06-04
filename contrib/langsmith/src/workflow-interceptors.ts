@@ -52,6 +52,7 @@ import {
 } from './propagation';
 import {
   ReplaySafeRunTree,
+  _RootReplaySafeRunTreeFactory,
   RUN_TYPE,
   continueAsNewRunName,
   describeError,
@@ -261,6 +262,15 @@ function asReplaySafeAnchor(parent: RunTree | undefined): ReplaySafeRunTree | un
   });
 }
 
+/**
+ * A synthetic anchor for the no-propagated-parent case. Installed as the ambient
+ * so a workflow-body `traceable` always nests via `createChild`; never emitted,
+ * and its children are independent roots (see {@link _RootReplaySafeRunTreeFactory}).
+ */
+function syntheticRoot(): _RootReplaySafeRunTreeFactory {
+  return new _RootReplaySafeRunTreeFactory({ name: workflowInfo().workflowType, run_type: RUN_TYPE.CHAIN });
+}
+
 function contextHeaderObject(run: RunTree | undefined): LangSmithTraceContext | undefined {
   return run ? (run.toHeaders() as LangSmithTraceContext) : undefined;
 }
@@ -324,7 +334,10 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
 
   validateUpdate(input: UpdateInput, next: Next<WorkflowInboundCallsInterceptor, 'validateUpdate'>): void {
     if (!this.config.addTemporalRuns) {
-      next(input);
+      // Synthetic anchor-only root keeps a validator-body `traceable` off the
+      // no-parent `crypto` path (see runInbound). Validators are synchronous, so
+      // install it via the stack-based `run`, not the async `withAmbient`.
+      this.ctx.run(syntheticRoot(), () => next(input));
       return;
     }
     const parent = reconstructParent(input.headers);
@@ -362,7 +375,12 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
     if (!this.config.addTemporalRuns) {
       // Propagation only: install the reconstructed parent as ambient so user
       // `traceable` runs nest under it; never emit a Temporal-operation run.
-      return this.ctx.withAmbient(asReplaySafeAnchor(parent), next);
+      // With no propagated parent, install a synthetic anchor instead of
+      // `undefined` so a workflow-body `traceable` takes LangSmith's
+      // `createChild` branch (deterministic id) rather than the no-parent branch
+      // that mints a uuid via `crypto`, which the isolate lacks.
+      const ambient = asReplaySafeAnchor(parent) ?? syntheticRoot();
+      return this.ctx.withAmbient(ambient, next);
     }
     const anchor = asReplaySafeAnchor(parent);
     const run = new ReplaySafeRunTree({
