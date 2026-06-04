@@ -117,7 +117,7 @@ export class LangSmithPlugin extends SimplePlugin {
     // base constructor reads `options.name` immediately, so a `readonly name`
     // field initializer — which runs only *after* `super()` returns — would
     // leave the base reading `undefined.name` and throw.
-    super({ name: 'langsmith.LangSmithPlugin' });
+    super({ name: 'langchain.LangSmithPlugin' });
     this.client = options.client ?? new Client();
     const addTemporalRuns = options.addTemporalRuns ?? false;
     this.emitter = {
