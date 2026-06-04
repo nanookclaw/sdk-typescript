@@ -89,6 +89,13 @@ const WORKFLOW_BODY_TREE_A = [
 /** Workflow-body `traceable` with addTemporalRuns off — still parented via the propagated context. */
 const WORKFLOW_BODY_TREE_B = ['user_pipeline', '  workflow_inner_call'].join('\n');
 
+/**
+ * Workflow-body `traceable` with addTemporalRuns off and NO client-side parent —
+ * just the user's run, with no spurious synthetic root (the anchor that keeps the
+ * isolate off the no-parent `crypto` path stays invisible).
+ */
+const WORKFLOW_BODY_ROOT_TREE = ['workflow_inner_call'].join('\n');
+
 /** Local-activity workflow with addTemporalRuns on — exercises the `scheduleLocalActivity` outbound path. */
 const LOCAL_ACTIVITY_TREE = [
   'StartWorkflow:LocalActivityWorkflow',
@@ -226,6 +233,31 @@ test('workflow-body traceable nests via the isolate context provider: nests the 
     },
   });
   t.deepEqual(dumpTraces(collector.records), WORKFLOW_BODY_TREE_B);
+});
+
+/**
+ * The root-body path: a workflow-body `traceable` with addTemporalRuns off and
+ * NO client-side `traceable` wrapper, so no parent context is propagated in.
+ * Without the synthetic anchor root, LangSmith would take its no-parent branch
+ * and mint a uuid via `crypto`, which the isolate lacks — crashing the Workflow
+ * Task. The synthetic root keeps it on the `createChild` branch and stays
+ * invisible, so only the user's `workflow_inner_call` run is emitted.
+ */
+test('workflow-body traceable with no propagated parent does not crash and emits just the user run (addTemporalRuns: false)', async (t) => {
+  const collector = new InMemoryRunCollector();
+  await withTracingWorker({
+    collector,
+    options: { addTemporalRuns: false },
+    activities: ALL_ACTIVITIES,
+    body: async ({ client, taskQueue }) => {
+      await client.workflow.execute(workflows.WorkflowBodyTraceableWorkflow, {
+        taskQueue,
+        workflowId: `wf-body-root-${Date.now()}`,
+        args: ['hello'],
+      });
+    },
+  });
+  t.deepEqual(dumpTraces(collector.records), WORKFLOW_BODY_ROOT_TREE);
 });
 
 test('plugin options are carried onto emitted runs: applies projectName, defaultTags, and (scrubbed) defaultMetadata', async (t) => {

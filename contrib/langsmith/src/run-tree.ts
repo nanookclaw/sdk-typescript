@@ -296,3 +296,30 @@ export class ReplaySafeRunTree extends RunTree {
 export function newRun(config: RunTreeConfig): ReplaySafeRunTree {
   return new ReplaySafeRunTree(config);
 }
+
+/**
+ * A purely-internal anchor installed as the ambient run when `addTemporalRuns`
+ * is off and no parent was propagated. It exists only so a workflow-body
+ * `traceable` finds a `RunTree` in the context and takes LangSmith's
+ * `createChild` branch (deterministic id) rather than the no-parent branch that
+ * mints a uuid via `crypto` — which the workflow isolate lacks.
+ *
+ * Its {@link createChild} deliberately produces an **independent root** child
+ * (no `parent_run_id`, no `parent_run`), so the user's run appears as a real
+ * root in LangSmith rather than dangling under a phantom that is never emitted.
+ * The anchor itself must never be emitted, so the I/O methods are no-ops.
+ */
+export class _RootReplaySafeRunTreeFactory extends ReplaySafeRunTree {
+  /** Produce a replay-safe child with no link back to this factory. */
+  override createChild(config: RunTreeConfig): ReplaySafeRunTree {
+    return new ReplaySafeRunTree({
+      ...config,
+      run_type: config.run_type ?? RUN_TYPE.CHAIN,
+      project_name: config.project_name ?? this.project_name,
+    });
+  }
+
+  override async postRun(): Promise<void> {}
+
+  override async patchRun(): Promise<void> {}
+}
