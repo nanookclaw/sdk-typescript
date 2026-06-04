@@ -68,26 +68,21 @@ test('scrubSensitive prefix-matches case-insensitively (authentication matches a
   t.is(isSensitiveKey('username'), false);
 });
 
-test('isTracingEnabled defaults to enabled when no flags are set', (t) => {
-  t.is(isTracingEnabled({}), true);
+test('isTracingEnabled defaults to disabled when no flags are set', (t) => {
+  t.is(isTracingEnabled({}), false);
 });
 
-for (const value of ['false', 'FALSE', '0', 'no', ' No ']) {
+for (const key of ['LANGSMITH_TRACING', 'LANGSMITH_TRACING_V2', 'LANGCHAIN_TRACING_V2', 'LANGCHAIN_TRACING']) {
+  test(`isTracingEnabled is enabled when ${key} is explicitly "true"`, (t) => {
+    t.is(isTracingEnabled({ [key]: 'true' }), true);
+  });
+}
+
+for (const value of ['false', '0', 'no', 'TRUE', '1', '']) {
   test(`isTracingEnabled treats ${JSON.stringify(value)} as disabled`, (t) => {
     t.is(isTracingEnabled({ LANGSMITH_TRACING: value }), false);
   });
 }
-
-for (const key of ['LANGSMITH_TRACING', 'LANGSMITH_TRACING_V2', 'LANGCHAIN_TRACING_V2', 'LANGCHAIN_TRACING']) {
-  test(`isTracingEnabled honors ${key} as a kill-switch`, (t) => {
-    t.is(isTracingEnabled({ [key]: 'false' }), false);
-  });
-}
-
-test('isTracingEnabled stays enabled for truthy values', (t) => {
-  t.is(isTracingEnabled({ LANGSMITH_TRACING: 'true' }), true);
-  t.is(isTracingEnabled({ LANGSMITH_TRACING: '1' }), true);
-});
 
 test('isInternalQuery filters Temporal-internal queries', (t) => {
   t.is(isInternalQuery('__temporal_workflow_metadata'), true);

@@ -25,6 +25,8 @@ import { HEADER_KEY, decodeContextString, encodeContextString } from '../propaga
 import type { EmitterConfig } from '../sinks';
 import { InMemoryRunCollector } from './helpers';
 
+process.env.LANGSMITH_TRACING = 'true';
+
 type NexusHandler = (
   input: { service: string; operation: string; headers?: Record<string, string> },
   next: (input: unknown) => Promise<unknown>
