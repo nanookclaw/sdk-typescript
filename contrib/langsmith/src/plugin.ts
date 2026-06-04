@@ -30,9 +30,6 @@ import { createLangSmithSinks } from './sinks';
 import type { EmitterConfig } from './sinks';
 import type { WorkflowLangSmithConfig } from './workflow-interceptors';
 
-// The base class merges the values returned by each `configure*` hook into the
-// downstream Client / Worker / bundler options, and drives `runWorker`.
-
 /**
  * The webpack `Configuration` type as the SDK's bundler hook sees it. Derived
  * from {@link BundleOptions} rather than imported directly: `@temporalio/worker`
