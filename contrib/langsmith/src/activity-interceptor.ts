@@ -15,11 +15,11 @@
  * @module
  */
 
-import type { Context as ActivityContext } from '@temporalio/activity';
-import type { Payload } from '@temporalio/common';
 import { RunTree } from 'langsmith/run_trees';
 import { withRunTree } from 'langsmith/traceable';
 import type { Client } from 'langsmith';
+import type { Payload } from '@temporalio/common';
+import type { Context as ActivityContext } from '@temporalio/activity';
 
 import {
   HEADER_KEY,
@@ -98,10 +98,7 @@ function anchor(config: EmitterConfig, ctx: LangSmithTraceContext | undefined): 
  * Run `fn` with `op` installed as the active LangSmith run, emitting the run
  * around the call. Shared by activity and Nexus handlers.
  */
-async function traceOperation(
-  op: RunTree,
-  fn: () => Promise<unknown>,
-): Promise<unknown> {
+async function traceOperation(op: RunTree, fn: () => Promise<unknown>): Promise<unknown> {
   await op.postRun();
   try {
     const result = await withRunTree(op, fn);
@@ -121,7 +118,7 @@ async function traceOperation(
  * read the activity type for the run name.
  */
 export function createActivityInboundInterceptor(
-  config: EmitterConfig,
+  config: EmitterConfig
 ): (ctx: ActivityContext) => ActivityInboundInterceptor {
   return (ctx: ActivityContext) => ({
     async execute(input: ActivityExecuteInput, next: ActivityNext): Promise<unknown> {
@@ -183,7 +180,8 @@ function nexusContext(input: NexusOperationInput): LangSmithTraceContext | undef
  * under it); `cancelOperation` opens `RunCancelNexusOperationHandler:`.
  */
 export function createNexusInboundInterceptor(config: EmitterConfig): NexusInboundInterceptor {
-  const handle = (nameOf: (s: string, o: string) => string) =>
+  const handle =
+    (nameOf: (s: string, o: string) => string) =>
     async (input: NexusOperationInput, next: NexusNext): Promise<unknown> => {
       if (!isTracingEnabled()) {
         return next(input);
@@ -200,6 +198,7 @@ export function createNexusInboundInterceptor(config: EmitterConfig): NexusInbou
         project_name: config.projectName ?? parent?.project_name,
         tags: config.defaultTags,
         extra: { metadata: scrubSensitive(config.defaultMetadata) ?? {} },
+        tracingEnabled: true,
       });
       return traceOperation(run, () => next(input));
     };

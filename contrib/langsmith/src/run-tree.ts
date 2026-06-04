@@ -25,10 +25,10 @@
  * @module
  */
 
-import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
-import { proxySinks, uuid4, workflowInfo } from '@temporalio/workflow';
 import { RunTree, convertToDottedOrderFormat, type RunTreeConfig } from 'langsmith/run_trees';
 import type { Client } from 'langsmith';
+import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
+import { proxySinks, uuid4, workflowInfo } from '@temporalio/workflow';
 
 import { scrubSensitive } from './propagation';
 import type { LangSmithSinks, SerializedRun } from './sinks';
@@ -54,8 +54,7 @@ export const startActivityRunName = (activityType: string): string => `StartActi
 /** `RunActivity:<name>` — the activity-execution span (activity inbound). */
 export const runActivityRunName = (activityType: string): string => `RunActivity:${activityType}`;
 /** `StartChildWorkflow:<type>` — workflow-side child-start marker. */
-export const startChildWorkflowRunName = (workflowType: string): string =>
-  `StartChildWorkflow:${workflowType}`;
+export const startChildWorkflowRunName = (workflowType: string): string => `StartChildWorkflow:${workflowType}`;
 /** `ContinueAsNew:<type>` — continue-as-new marker. */
 export const continueAsNewRunName = (workflowType: string): string => `ContinueAsNew:${workflowType}`;
 /** `StartNexusOperation:<service>/<op>` — workflow-side Nexus-start marker. */
@@ -78,22 +77,17 @@ export const validateUpdateRunName = (updateName: string): string => `ValidateUp
 /** `SignalWorkflow:<name>` — client/outbound signal marker. */
 export const signalWorkflowRunName = (signalName: string): string => `SignalWorkflow:${signalName}`;
 /** `SignalChildWorkflow:<name>` — workflow-side signal-child marker. */
-export const signalChildWorkflowRunName = (signalName: string): string =>
-  `SignalChildWorkflow:${signalName}`;
+export const signalChildWorkflowRunName = (signalName: string): string => `SignalChildWorkflow:${signalName}`;
 /** `SignalExternalWorkflow:<name>` — workflow-side signal-external marker. */
-export const signalExternalWorkflowRunName = (signalName: string): string =>
-  `SignalExternalWorkflow:${signalName}`;
+export const signalExternalWorkflowRunName = (signalName: string): string => `SignalExternalWorkflow:${signalName}`;
 /** `SignalWithStartWorkflow:<type>` — client signal-with-start marker. */
-export const signalWithStartRunName = (workflowType: string): string =>
-  `SignalWithStartWorkflow:${workflowType}`;
+export const signalWithStartRunName = (workflowType: string): string => `SignalWithStartWorkflow:${workflowType}`;
 /** `QueryWorkflow:<name>` — client query marker. */
 export const queryWorkflowRunName = (queryName: string): string => `QueryWorkflow:${queryName}`;
 /** `StartWorkflowUpdate:<name>` — client update-start marker. */
-export const startWorkflowUpdateRunName = (updateName: string): string =>
-  `StartWorkflowUpdate:${updateName}`;
+export const startWorkflowUpdateRunName = (updateName: string): string => `StartWorkflowUpdate:${updateName}`;
 /** `StartUpdateWithStartWorkflow:<name>` — client update-with-start marker. */
-export const startUpdateWithStartRunName = (updateName: string): string =>
-  `StartUpdateWithStartWorkflow:${updateName}`;
+export const startUpdateWithStartRunName = (updateName: string): string => `StartUpdateWithStartWorkflow:${updateName}`;
 
 // ---------------------------------------------------------------------------
 // Workflow-isolate determinism helpers (only called inside a workflow).

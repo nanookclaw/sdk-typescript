@@ -26,17 +26,12 @@
  * @module
  */
 
-import type { Payload } from '@temporalio/common';
 import { RunTree } from 'langsmith/run_trees';
 import { getCurrentRunTree } from 'langsmith/traceable';
 import type { Client } from 'langsmith';
+import type { Payload } from '@temporalio/common';
 
-import {
-  isTracingEnabled,
-  scrubSensitive,
-  withContextHeader,
-  type LangSmithTraceContext,
-} from './propagation';
+import { isTracingEnabled, scrubSensitive, withContextHeader, type LangSmithTraceContext } from './propagation';
 import {
   RUN_TYPE,
   queryWorkflowRunName,
@@ -88,7 +83,7 @@ function buildRun(
   config: EmitterConfig,
   ambient: RunTree | undefined,
   name: string,
-  inputs: Record<string, unknown>,
+  inputs: Record<string, unknown>
 ): RunTree {
   return new RunTree({
     name,
@@ -121,11 +116,7 @@ function headersOf(run: RunTree | undefined): LangSmithTraceContext | undefined 
  */
 export function createClientInterceptor(config: EmitterConfig): Record<string, unknown> {
   /** Execution op: marker is a peer of the remote run; propagate the ambient. */
-  const peerStart = async <O>(
-    input: StartInput,
-    next: NextFn<StartInput, O>,
-    name: string,
-  ): Promise<O> => {
+  const peerStart = async <O>(input: StartInput, next: NextFn<StartInput, O>, name: string): Promise<O> => {
     if (!isTracingEnabled()) {
       return next(input);
     }
@@ -138,11 +129,7 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
   };
 
   /** Messaging op: remote handler nests under the marker; propagate the marker. */
-  const parentMessage = async <I extends WithHeaders, O>(
-    input: I,
-    next: NextFn<I, O>,
-    name: string,
-  ): Promise<O> => {
+  const parentMessage = async <I extends WithHeaders, O>(input: I, next: NextFn<I, O>, name: string): Promise<O> => {
     if (!isTracingEnabled()) {
       return next(input);
     }
@@ -170,10 +157,7 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     signal(input: SignalInput, next: NextFn<SignalInput, void>): Promise<void> {
       return parentMessage(input, next, signalWorkflowRunName(input.signalName));
     },
-    signalWithStart(
-      input: SignalWithStartInput,
-      next: NextFn<SignalWithStartInput, string>,
-    ): Promise<string> {
+    signalWithStart(input: SignalWithStartInput, next: NextFn<SignalWithStartInput, string>): Promise<string> {
       return parentMessage(input, next, signalWithStartRunName(input.workflowType));
     },
     query(input: QueryInput, next: NextFn<QueryInput, unknown>): Promise<unknown> {
@@ -182,10 +166,7 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     startUpdate(input: UpdateInput, next: NextFn<UpdateInput, unknown>): Promise<unknown> {
       return parentMessage(input, next, startWorkflowUpdateRunName(updateName(input)));
     },
-    startUpdateWithStart(
-      input: UpdateInput,
-      next: NextFn<UpdateInput, unknown>,
-    ): Promise<unknown> {
+    startUpdateWithStart(input: UpdateInput, next: NextFn<UpdateInput, unknown>): Promise<unknown> {
       return parentMessage(input, next, startUpdateWithStartRunName(updateName(input)));
     },
     // Lifecycle operations carry no trace context and emit no run.

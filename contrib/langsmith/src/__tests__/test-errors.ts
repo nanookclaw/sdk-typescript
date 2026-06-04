@@ -11,13 +11,13 @@
 
 // User opted into tracing by installing the plugin; force the gate on so the
 // activity-side runs emit deterministically regardless of ambient env.
-process.env.LANGSMITH_TRACING = 'true';
-
 import test from 'ava';
 
 import * as activities from './activities/langsmith';
 import { InMemoryRunCollector, withTracingWorker } from './helpers';
 import * as workflows from './workflows/langsmith';
+
+process.env.LANGSMITH_TRACING = 'true';
 
 const ACTIVITIES = {
   failingActivity: activities.failingActivity,
@@ -35,7 +35,7 @@ test('error marking on activity runs: marks a non-benign activity failure as "<t
         client.workflow.execute(workflows.ErrorWorkflow, {
           taskQueue,
           workflowId: `error-${Date.now()}`,
-        }),
+        })
       );
     },
   });
@@ -54,7 +54,7 @@ test('error marking on activity runs: does NOT mark a BENIGN-category failure as
         client.workflow.execute(workflows.BenignWorkflow, {
           taskQueue,
           workflowId: `benign-${Date.now()}`,
-        }),
+        })
       );
     },
   });
@@ -81,7 +81,7 @@ test('error marking on workflow runs: does NOT mark a workflow that fails with a
         client.workflow.execute(workflows.BenignWorkflowDirect, {
           taskQueue,
           workflowId: `benign-direct-${Date.now()}`,
-        }),
+        })
       );
     },
   });

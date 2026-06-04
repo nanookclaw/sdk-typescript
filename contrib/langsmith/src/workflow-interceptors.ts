@@ -18,14 +18,18 @@
  * @module
  */
 
-import {
+import { RunTree } from 'langsmith/run_trees';
+import { AsyncLocalStorageProviderSingleton } from 'langsmith/singletons/traceable';
+import type {
   ContinueAsNewInput,
   Next,
-  workflowInfo,
   WorkflowExecuteInput,
   WorkflowInboundCallsInterceptor,
   WorkflowInterceptors,
   WorkflowOutboundCallsInterceptor,
+} from '@temporalio/workflow';
+import {
+  workflowInfo,
   type ActivityInput,
   type Headers,
   type LocalActivityInput,
@@ -37,8 +41,6 @@ import {
   type StartNexusOperationOutput,
   type UpdateInput,
 } from '@temporalio/workflow';
-import { RunTree } from 'langsmith/run_trees';
-import { AsyncLocalStorageProviderSingleton } from 'langsmith/singletons/traceable';
 
 import {
   HEADER_KEY,
@@ -171,8 +173,7 @@ function ensureProviderInstalled(manager: WorkflowContextManager): void {
   // generic `run<T>` signature to the interface's `run: (ctx, () => void) => void`.
   AsyncLocalStorageProviderSingleton.initializeGlobalInstance({
     getStore: () => manager.getStore(),
-    run: <T>(context: RunTree | undefined, fn: () => T): T =>
-      manager.run(context as RunTree | undefined, fn),
+    run: <T>(context: RunTree | undefined, fn: () => T): T => manager.run(context as RunTree | undefined, fn),
   } as Parameters<typeof AsyncLocalStorageProviderSingleton.initializeGlobalInstance>[0]);
 }
 
@@ -268,7 +269,7 @@ function contextHeaderObject(run: RunTree | undefined): LangSmithTraceContext | 
 async function emitMarker(
   parent: ReplaySafeRunTree,
   name: string,
-  inputs: Record<string, unknown>,
+  inputs: Record<string, unknown>
 ): Promise<ReplaySafeRunTree> {
   const marker = parent.createChild({ name, run_type: RUN_TYPE.CHAIN, inputs });
   await marker.postRun();
@@ -280,7 +281,7 @@ async function emitMarker(
 class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
   constructor(
     private readonly ctx: WorkflowContextManager,
-    private readonly config: WorkflowLangSmithConfig,
+    private readonly config: WorkflowLangSmithConfig
   ) {}
 
   async execute(input: WorkflowExecuteInput, next: Next<WorkflowInboundCallsInterceptor, 'execute'>): Promise<unknown> {
@@ -290,18 +291,14 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
       RUN_TYPE.CHAIN,
       parent,
       { args: input.args },
-      () => next(input),
+      () => next(input)
     );
   }
 
   async handleSignal(input: SignalInput, next: Next<WorkflowInboundCallsInterceptor, 'handleSignal'>): Promise<void> {
     const parent = reconstructParent(input.headers);
-    await this.runInbound(
-      handleSignalRunName(input.signalName),
-      RUN_TYPE.CHAIN,
-      parent,
-      { args: input.args },
-      () => next(input),
+    await this.runInbound(handleSignalRunName(input.signalName), RUN_TYPE.CHAIN, parent, { args: input.args }, () =>
+      next(input)
     );
   }
 
@@ -310,23 +307,18 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
       return next(input);
     }
     const parent = reconstructParent(input.headers);
-    return this.runInbound(
-      handleQueryRunName(input.queryName),
-      RUN_TYPE.CHAIN,
-      parent,
-      { args: input.args },
-      () => next(input),
+    return this.runInbound(handleQueryRunName(input.queryName), RUN_TYPE.CHAIN, parent, { args: input.args }, () =>
+      next(input)
     );
   }
 
-  async handleUpdate(input: UpdateInput, next: Next<WorkflowInboundCallsInterceptor, 'handleUpdate'>): Promise<unknown> {
+  async handleUpdate(
+    input: UpdateInput,
+    next: Next<WorkflowInboundCallsInterceptor, 'handleUpdate'>
+  ): Promise<unknown> {
     const parent = reconstructParent(input.headers);
-    return this.runInbound(
-      handleUpdateRunName(updateName(input)),
-      RUN_TYPE.CHAIN,
-      parent,
-      { args: input.args },
-      () => next(input),
+    return this.runInbound(handleUpdateRunName(updateName(input)), RUN_TYPE.CHAIN, parent, { args: input.args }, () =>
+      next(input)
     );
   }
 
@@ -365,7 +357,7 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
     runType: string,
     parent: RunTree | undefined,
     inputs: Record<string, unknown>,
-    next: () => Promise<unknown>,
+    next: () => Promise<unknown>
   ): Promise<unknown> {
     if (!this.config.addTemporalRuns) {
       // Propagation only: install the reconstructed parent as ambient so user
@@ -401,41 +393,39 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
 class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
   constructor(
     private readonly ctx: WorkflowContextManager,
-    private readonly config: WorkflowLangSmithConfig,
+    private readonly config: WorkflowLangSmithConfig
   ) {}
 
   async scheduleActivity(
     input: ActivityInput,
-    next: Next<WorkflowOutboundCallsInterceptor, 'scheduleActivity'>,
+    next: Next<WorkflowOutboundCallsInterceptor, 'scheduleActivity'>
   ): Promise<unknown> {
     return this.peerMarker(startActivityRunName(input.activityType), input, (headers: Headers) =>
-      next({ ...input, headers }),
+      next({ ...input, headers })
     );
   }
 
   async scheduleLocalActivity(
     input: LocalActivityInput,
-    next: Next<WorkflowOutboundCallsInterceptor, 'scheduleLocalActivity'>,
+    next: Next<WorkflowOutboundCallsInterceptor, 'scheduleLocalActivity'>
   ): Promise<unknown> {
     return this.peerMarker(startActivityRunName(input.activityType), input, (headers: Headers) =>
-      next({ ...input, headers }),
+      next({ ...input, headers })
     );
   }
 
   async startChildWorkflowExecution(
     input: StartChildWorkflowExecutionInput,
-    next: Next<WorkflowOutboundCallsInterceptor, 'startChildWorkflowExecution'>,
+    next: Next<WorkflowOutboundCallsInterceptor, 'startChildWorkflowExecution'>
   ): Promise<[Promise<string>, Promise<unknown>]> {
-    return this.peerMarker(
-      startChildWorkflowRunName(input.workflowType),
-      input,
-      (headers: Headers) => next({ ...input, headers }),
+    return this.peerMarker(startChildWorkflowRunName(input.workflowType), input, (headers: Headers) =>
+      next({ ...input, headers })
     );
   }
 
   async continueAsNew(
     input: ContinueAsNewInput,
-    next: Next<WorkflowOutboundCallsInterceptor, 'continueAsNew'>,
+    next: Next<WorkflowOutboundCallsInterceptor, 'continueAsNew'>
   ): Promise<never> {
     const ambient = this.ctx.ambient();
     if (this.config.addTemporalRuns && ambient instanceof ReplaySafeRunTree) {
@@ -447,7 +437,7 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
 
   async signalWorkflow(
     input: SignalWorkflowInput,
-    next: Next<WorkflowOutboundCallsInterceptor, 'signalWorkflow'>,
+    next: Next<WorkflowOutboundCallsInterceptor, 'signalWorkflow'>
   ): Promise<void> {
     const isChild = input.target.type === 'child';
     const name = isChild
@@ -458,16 +448,14 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
 
   async startNexusOperation(
     input: StartNexusOperationInput,
-    next: Next<WorkflowOutboundCallsInterceptor, 'startNexusOperation'>,
+    next: Next<WorkflowOutboundCallsInterceptor, 'startNexusOperation'>
   ): Promise<StartNexusOperationOutput> {
     const ambient = this.ctx.ambient();
     if (this.config.addTemporalRuns && ambient instanceof ReplaySafeRunTree) {
       await emitMarker(ambient, startNexusOperationRunName(input.service, input.operation), {});
     }
     const ctx = contextHeaderObject(ambient);
-    const headers = ctx
-      ? { ...input.headers, [HEADER_KEY]: encodeContextString(ctx) }
-      : input.headers;
+    const headers = ctx ? { ...input.headers, [HEADER_KEY]: encodeContextString(ctx) } : input.headers;
     return next({ ...input, headers });
   }
 
@@ -475,7 +463,7 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
   private async peerMarker<R>(
     name: string,
     input: { headers: Headers; args?: unknown[] },
-    next: (headers: Headers) => Promise<R>,
+    next: (headers: Headers) => Promise<R>
   ): Promise<R> {
     const ambient = this.ctx.ambient();
     if (this.config.addTemporalRuns && ambient instanceof ReplaySafeRunTree) {
@@ -489,13 +477,15 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
   private async parentMarker<R>(
     name: string,
     input: { headers: Headers; args?: unknown[] },
-    next: (headers: Headers) => Promise<R>,
+    next: (headers: Headers) => Promise<R>
   ): Promise<R> {
     const ambient = this.ctx.ambient();
     let propagate: RunTree | undefined = ambient;
     if (this.config.addTemporalRuns && ambient instanceof ReplaySafeRunTree) {
       const marker = ambient.createChild({ name, run_type: RUN_TYPE.CHAIN, inputs: { args: input.args ?? [] } });
       await marker.postRun();
+      await marker.end({});
+      await marker.patchRun();
       propagate = marker;
     }
     const headers = withContextHeader(input.headers, contextHeaderObject(propagate));

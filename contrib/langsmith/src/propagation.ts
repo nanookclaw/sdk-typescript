@@ -80,9 +80,7 @@ export function isSensitiveKey(key: string): boolean {
  * so that secrets a user happens to carry in workflow/activity metadata never
  * reach the observability backend.
  */
-export function scrubSensitive<T = unknown>(
-  record: Record<string, T> | undefined,
-): Record<string, T> | undefined {
+export function scrubSensitive<T = unknown>(record: Record<string, T> | undefined): Record<string, T> | undefined {
   if (record == null) {
     return record;
   }
@@ -154,7 +152,7 @@ function isTraceContext(value: unknown): value is LangSmithTraceContext {
  */
 export function withContextHeader(
   headers: Record<string, Payload>,
-  context: LangSmithTraceContext | undefined,
+  context: LangSmithTraceContext | undefined
 ): Record<string, Payload> {
   if (context === undefined) {
     return headers;
@@ -163,9 +161,7 @@ export function withContextHeader(
 }
 
 /** Read a trace context out of a Payload-keyed Temporal header map. */
-export function readContextHeader(
-  headers: Record<string, Payload> | undefined,
-): LangSmithTraceContext | undefined {
+export function readContextHeader(headers: Record<string, Payload> | undefined): LangSmithTraceContext | undefined {
   return decodeContextPayload(headers?.[HEADER_KEY]);
 }
 
@@ -178,12 +174,7 @@ export function readContextHeader(
  * The plugin consults this before emitting any run.
  */
 export function isTracingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const flags = [
-    env.LANGSMITH_TRACING,
-    env.LANGSMITH_TRACING_V2,
-    env.LANGCHAIN_TRACING_V2,
-    env.LANGCHAIN_TRACING,
-  ];
+  const flags = [env.LANGSMITH_TRACING, env.LANGSMITH_TRACING_V2, env.LANGCHAIN_TRACING_V2, env.LANGCHAIN_TRACING];
   for (const raw of flags) {
     if (raw === undefined) {
       continue;
@@ -203,9 +194,5 @@ export function isTracingEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
  * stack-trace introspection queries are filtered out of tracing.
  */
 export function isInternalQuery(queryName: string): boolean {
-  return (
-    queryName.startsWith('__temporal') ||
-    queryName === '__stack_trace' ||
-    queryName === '__enhanced_stack_trace'
-  );
+  return queryName.startsWith('__temporal') || queryName === '__stack_trace' || queryName === '__enhanced_stack_trace';
 }

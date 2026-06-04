@@ -15,9 +15,9 @@
  * @module
  */
 
+import type { LangSmithTracingClientInterface } from 'langsmith';
 import type { Sinks } from '@temporalio/workflow';
 import type { InjectedSinks } from '@temporalio/worker';
-import type { LangSmithTracingClientInterface } from 'langsmith';
 
 import { isTracingEnabled } from './propagation';
 
@@ -133,9 +133,7 @@ function toUpdateParams(run: SerializedRun): Parameters<LangSmithTracingClientIn
  * Worker's `sinks` by hand instead of letting {@link LangSmithPlugin} inject
  * them; merge the returned object into your own `InjectedSinks`.
  */
-export function createLangSmithSinks(
-  client: LangSmithTracingClientInterface,
-): InjectedSinks<LangSmithSinks> {
+export function createLangSmithSinks(client: LangSmithTracingClientInterface): InjectedSinks<LangSmithSinks> {
   return {
     langsmith: {
       createRun: {

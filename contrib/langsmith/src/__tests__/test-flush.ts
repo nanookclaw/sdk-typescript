@@ -44,7 +44,7 @@ test('flush-on-shutdown: drains pending trace batches even when the worker run t
     runWorker({}, async () => {
       throw new Error('boom');
     }),
-    { message: 'boom' },
+    { message: 'boom' }
   );
 
   t.is(collector.flushCount, 1);

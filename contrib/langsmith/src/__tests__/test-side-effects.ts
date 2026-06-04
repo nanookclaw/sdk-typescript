@@ -12,13 +12,13 @@
  * @module
  */
 
-process.env.LANGSMITH_TRACING = 'true';
-
 import test from 'ava';
 
 import * as activities from './activities/langsmith';
 import { InMemoryRunCollector, dumpTraces, withTracingWorker } from './helpers';
 import * as workflows from './workflows/langsmith';
+
+process.env.LANGSMITH_TRACING = 'true';
 
 const SIMPLE_TREE = [
   'StartWorkflow:SimpleWorkflow',

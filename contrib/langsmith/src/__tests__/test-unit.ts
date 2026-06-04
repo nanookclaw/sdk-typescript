@@ -9,6 +9,7 @@
 
 import test from 'ava';
 
+import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
 import {
   HEADER_KEY,
   decodeContextPayload,
@@ -33,7 +34,6 @@ import {
   startNexusOperationRunName,
   startWorkflowRunName,
 } from '../run-tree';
-import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
 
 import { InMemoryRunCollector, dumpTraces, type CollectedRun } from './helpers';
 
@@ -78,12 +78,7 @@ for (const value of ['false', 'FALSE', '0', 'no', ' No ']) {
   });
 }
 
-for (const key of [
-  'LANGSMITH_TRACING',
-  'LANGSMITH_TRACING_V2',
-  'LANGCHAIN_TRACING_V2',
-  'LANGCHAIN_TRACING',
-]) {
+for (const key of ['LANGSMITH_TRACING', 'LANGSMITH_TRACING_V2', 'LANGCHAIN_TRACING_V2', 'LANGCHAIN_TRACING']) {
   test(`isTracingEnabled honors ${key} as a kill-switch`, (t) => {
     t.is(isTracingEnabled({ [key]: 'false' }), false);
   });
@@ -166,12 +161,7 @@ test('run-name builders build the documented names', (t) => {
 const run = (id: string, name: string, parent?: string): CollectedRun => ({ id, name, parent_run_id: parent });
 
 test('dumpTraces renders a nested tree with two-space indent in insertion order', (t) => {
-  const records = [
-    run('1', 'root'),
-    run('2', 'child-a', '1'),
-    run('3', 'grandchild', '2'),
-    run('4', 'child-b', '1'),
-  ];
+  const records = [run('1', 'root'), run('2', 'child-a', '1'), run('3', 'grandchild', '2'), run('4', 'child-b', '1')];
   t.is(dumpTraces(records), ['root', '  child-a', '    grandchild', '  child-b'].join('\n'));
 });
 

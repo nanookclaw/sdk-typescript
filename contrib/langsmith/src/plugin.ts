@@ -21,6 +21,9 @@
 
 import { Client } from 'langsmith';
 
+import { SimplePlugin } from '@temporalio/plugin';
+import type { ClientOptions } from '@temporalio/client';
+import type { BundleOptions, ReplayWorkerOptions, Worker, WorkerInterceptors, WorkerOptions } from '@temporalio/worker';
 import { createActivityInboundInterceptor, createNexusInboundInterceptor } from './activity-interceptor';
 import { createClientInterceptor } from './client-interceptor';
 import { createLangSmithSinks } from './sinks';
@@ -29,15 +32,6 @@ import type { WorkflowLangSmithConfig } from './workflow-interceptors';
 
 // The base class merges the values returned by each `configure*` hook into the
 // downstream Client / Worker / bundler options, and drives `runWorker`.
-import { SimplePlugin } from '@temporalio/plugin';
-import type { ClientOptions } from '@temporalio/client';
-import type {
-  BundleOptions,
-  ReplayWorkerOptions,
-  Worker,
-  WorkerInterceptors,
-  WorkerOptions,
-} from '@temporalio/worker';
 
 /**
  * The webpack `Configuration` type as the SDK's bundler hook sees it. Derived
@@ -178,9 +172,7 @@ export class LangSmithPlugin extends SimplePlugin {
     const interceptors: WorkerInterceptors = options.interceptors ?? {};
 
     const activityInbound = [...(interceptors.activityInbound ?? [])];
-    activityInbound.push(
-      createActivityInboundInterceptor(this.emitter) as unknown as (typeof activityInbound)[number],
-    );
+    activityInbound.push(createActivityInboundInterceptor(this.emitter) as unknown as (typeof activityInbound)[number]);
 
     const workflowModules = [...(interceptors.workflowModules ?? [])];
     if (!workflowModules.includes(WORKFLOW_INTERCEPTOR_MODULE)) {
@@ -189,9 +181,7 @@ export class LangSmithPlugin extends SimplePlugin {
 
     const nexusInbound = createNexusInboundInterceptor(this.emitter);
     const nexus = [...(interceptors.nexus ?? [])];
-    nexus.push(
-      ((_ctx: unknown) => ({ inbound: nexusInbound })) as unknown as (typeof nexus)[number],
-    );
+    nexus.push(((_ctx: unknown) => ({ inbound: nexusInbound })) as unknown as (typeof nexus)[number]);
 
     // Merge our sink without clobbering any sink the user already configured.
     const sinks = { ...(options.sinks ?? {}), ...createLangSmithSinks(this.client) };
@@ -313,16 +303,14 @@ export class LangSmithPlugin extends SimplePlugin {
 function aliasAsyncHooks(config: WebpackConfiguration): WebpackConfiguration {
   const plugins = [...(config.plugins ?? [])];
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const webpack = require('webpack') as {
-      NormalModuleReplacementPlugin: new (
-        re: RegExp,
-        cb: (resource: { request: string }) => void,
-      ) => unknown;
+      NormalModuleReplacementPlugin: new (re: RegExp, cb: (resource: { request: string }) => void) => unknown;
     };
     plugins.push(
       new webpack.NormalModuleReplacementPlugin(/^node:async_hooks$/, (resource) => {
         resource.request = WORKFLOW_INTERCEPTOR_MODULE;
-      }) as (typeof plugins)[number],
+      }) as (typeof plugins)[number]
     );
   } catch {
     /* webpack unavailable: leave plugins untouched (build will surface it) */
@@ -342,6 +330,7 @@ function aliasLangSmithNodeUtils(config: WebpackConfiguration): WebpackConfigura
   const plugins = [...(config.plugins ?? [])];
   const swap = (s: string): string => s.replace(/\.cjs$/, '.browser.cjs');
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const webpack = require('webpack') as {
       NormalModuleReplacementPlugin: new (
         re: RegExp,
@@ -349,36 +338,33 @@ function aliasLangSmithNodeUtils(config: WebpackConfiguration): WebpackConfigura
           request: string;
           context?: string;
           createData?: { resource?: string; userRequest?: string; request?: string };
-        }) => void,
+        }) => void
       ) => unknown;
     };
     plugins.push(
-      new webpack.NormalModuleReplacementPlugin(
-        /[/\\]utils[/\\](?:fs|worker_threads)\.cjs$/,
-        (resource) => {
-          // Resolved sibling-relative requires (`./fs.cjs`) carry the absolute
-          // path on `createData.resource`; raw `beforeResolve` requests carry it
-          // on `request`.
-          const createData = resource.createData;
-          if (createData && typeof createData.resource === 'string') {
-            if (!createData.resource.includes('langsmith') || createData.resource.includes('.browser.cjs')) {
-              return;
-            }
-            createData.resource = swap(createData.resource);
-            if (typeof createData.userRequest === 'string') {
-              createData.userRequest = swap(createData.userRequest);
-            }
-            if (typeof createData.request === 'string') {
-              createData.request = swap(createData.request);
-            }
+      new webpack.NormalModuleReplacementPlugin(/[/\\]utils[/\\](?:fs|worker_threads)\.cjs$/, (resource) => {
+        // Resolved sibling-relative requires (`./fs.cjs`) carry the absolute
+        // path on `createData.resource`; raw `beforeResolve` requests carry it
+        // on `request`.
+        const createData = resource.createData;
+        if (createData && typeof createData.resource === 'string') {
+          if (!createData.resource.includes('langsmith') || createData.resource.includes('.browser.cjs')) {
             return;
           }
-          if (!resource.context || !resource.context.includes('langsmith') || resource.request.includes('.browser.cjs')) {
-            return;
+          createData.resource = swap(createData.resource);
+          if (typeof createData.userRequest === 'string') {
+            createData.userRequest = swap(createData.userRequest);
           }
-          resource.request = swap(resource.request);
-        },
-      ) as (typeof plugins)[number],
+          if (typeof createData.request === 'string') {
+            createData.request = swap(createData.request);
+          }
+          return;
+        }
+        if (!resource.context || !resource.context.includes('langsmith') || resource.request.includes('.browser.cjs')) {
+          return;
+        }
+        resource.request = swap(resource.request);
+      }) as (typeof plugins)[number]
     );
   } catch {
     /* webpack unavailable: leave plugins untouched (build will surface it) */
@@ -391,12 +377,10 @@ function aliasLangSmithNodeUtils(config: WebpackConfiguration): WebpackConfigura
  * `webpack` import (webpack is provided transitively by the worker). Falls back
  * to a no-op if `DefinePlugin` cannot be resolved, so bundling never breaks.
  */
-function injectDefinePlugin(
-  config: WebpackConfiguration,
-  definitions: Record<string, string>,
-): WebpackConfiguration {
+function injectDefinePlugin(config: WebpackConfiguration, definitions: Record<string, string>): WebpackConfiguration {
   const plugins = [...(config.plugins ?? [])];
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const webpack = require('webpack') as { DefinePlugin: new (d: Record<string, string>) => unknown };
     plugins.push(new webpack.DefinePlugin(definitions) as (typeof plugins)[number]);
   } catch {

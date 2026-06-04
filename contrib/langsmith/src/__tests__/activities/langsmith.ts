@@ -8,8 +8,8 @@
  * @module
  */
 
-import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
 import { traceable } from 'langsmith/traceable';
+import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
 
 /** Leaf LLM-style run. */
 const innerLlmCall = traceable(async (prompt: string): Promise<string> => `llm:${prompt}`, {
@@ -22,16 +22,14 @@ const outerChain = traceable(async (prompt: string): Promise<string> => innerLlm
 });
 
 /** Activity body that traces one level deep: `traceable_activity` → `inner_llm_call`. */
-const traceableActivityImpl = traceable(
-  async (input: string): Promise<string> => innerLlmCall(input),
-  { name: 'traceable_activity' },
-);
+const traceableActivityImpl = traceable(async (input: string): Promise<string> => innerLlmCall(input), {
+  name: 'traceable_activity',
+});
 
 /** Activity body that traces two levels: `nested_traceable_activity` → `outer_chain` → `inner_llm_call`. */
-const nestedTraceableActivityImpl = traceable(
-  async (input: string): Promise<string> => outerChain(input),
-  { name: 'nested_traceable_activity' },
-);
+const nestedTraceableActivityImpl = traceable(async (input: string): Promise<string> => outerChain(input), {
+  name: 'nested_traceable_activity',
+});
 
 /** A plain activity with no LangSmith instrumentation in its body. */
 export async function simpleActivity(input: string): Promise<string> {

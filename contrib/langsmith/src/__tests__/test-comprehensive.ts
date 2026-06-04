@@ -19,14 +19,14 @@
 // Force LangSmith's own tracing gate on for this process so the user-side
 // `traceable` roots emit deterministically regardless of ambient env. (The
 // plugin-level kill switch is tested separately in test-env.ts.)
-process.env.LANGSMITH_TRACING = 'true';
-
 import test from 'ava';
 import { traceable } from 'langsmith/traceable';
 
 import * as activities from './activities/langsmith';
 import { InMemoryRunCollector, dumpTraces, withTracingWorker } from './helpers';
 import * as workflows from './workflows/langsmith';
+
+process.env.LANGSMITH_TRACING = 'true';
 
 const ALL_ACTIVITIES = {
   simpleActivity: activities.simpleActivity,
@@ -111,7 +111,7 @@ test('comprehensive run hierarchy: emits the full Temporal-run hierarchy under a
             workflowId: `comprehensive-true-${Date.now()}`,
             args: ['hello'],
           }),
-        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true },
+        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
       );
       await pipeline();
     },
@@ -133,7 +133,7 @@ test('comprehensive run hierarchy: emits only the traceable hierarchy but still 
             workflowId: `comprehensive-false-${Date.now()}`,
             args: ['hello'],
           }),
-        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true },
+        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
       );
       await pipeline();
     },
@@ -198,7 +198,7 @@ test('workflow-body traceable nests via the isolate context provider: nests the 
             workflowId: `wf-body-true-${Date.now()}`,
             args: ['hello'],
           }),
-        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true },
+        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
       );
       await pipeline();
     },
@@ -220,7 +220,7 @@ test('workflow-body traceable nests via the isolate context provider: nests the 
             workflowId: `wf-body-false-${Date.now()}`,
             args: ['hello'],
           }),
-        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true },
+        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
       );
       await pipeline();
     },

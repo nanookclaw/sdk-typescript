@@ -9,6 +9,7 @@
  * @module
  */
 
+import { traceable } from 'langsmith/traceable';
 import {
   ApplicationFailure,
   condition,
@@ -20,18 +21,24 @@ import {
   proxyActivities,
   proxyLocalActivities,
   setHandler,
+  startChild,
   workflowInfo,
 } from '@temporalio/workflow';
 import { ApplicationFailureCategory } from '@temporalio/common';
-import { traceable } from 'langsmith/traceable';
 
 import type * as activities from '../activities/langsmith';
 
-const { simpleActivity, plainActivity, traceableActivity, nestedTraceableActivity, failingActivity, benignFailingActivity } =
-  proxyActivities<typeof activities>({
-    startToCloseTimeout: '1 minute',
-    retry: { maximumAttempts: 1 },
-  });
+const {
+  simpleActivity,
+  plainActivity,
+  traceableActivity,
+  nestedTraceableActivity,
+  failingActivity,
+  benignFailingActivity,
+} = proxyActivities<typeof activities>({
+  startToCloseTimeout: '1 minute',
+  retry: { maximumAttempts: 1 },
+});
 
 const { simpleActivity: simpleLocalActivity } = proxyLocalActivities<typeof activities>({
   startToCloseTimeout: '1 minute',
@@ -120,21 +127,44 @@ export async function HandlersWorkflow(): Promise<string> {
   setHandler(completeSignal, () => {
     done = true;
   });
-  setHandler(
-    myUpdate,
-    (value: string) => `updated:${value}`,
-    {
-      validator: (value: string) => {
-        if (value === 'reject') {
-          throw new Error('rejected by validator');
-        }
-      },
+  setHandler(myUpdate, (value: string) => `updated:${value}`, {
+    validator: (value: string) => {
+      if (value === 'reject') {
+        throw new Error('rejected by validator');
+      }
     },
-  );
+  });
   setHandler(myUnvalidatedUpdate, (value: string) => `unvalidated:${value}`);
 
   await condition(() => done);
   return lastSignal;
+}
+
+/**
+ * Waits for `complete` so a parent can signal it before it finishes. Used as the
+ * child target of {@link SignalChildWorkflow} to exercise the workflow-side
+ * `signalWorkflow` outbound interceptor (`SignalChildWorkflow:` marker).
+ */
+export async function SignalReceiverWorkflow(): Promise<string> {
+  let value = '';
+  setHandler(mySignal, (v: string) => {
+    value = v;
+  });
+  await condition(() => value !== '');
+  return value;
+}
+
+/**
+ * Starts a child workflow and signals it from inside the workflow body, firing
+ * the outbound `signalWorkflow` interceptor with a `child` target so a
+ * `SignalChildWorkflow:` marker is emitted.
+ */
+export async function SignalChildWorkflow(input: string): Promise<string> {
+  const child = await startChild(SignalReceiverWorkflow, {
+    workflowId: `${workflowInfo().workflowId}-signal-child`,
+  });
+  await child.signal(mySignal, input);
+  return child.result();
 }
 
 /** Calls an activity that fails with a non-benign error, to assert error marking on the run. */

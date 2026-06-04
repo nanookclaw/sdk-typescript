@@ -13,13 +13,13 @@
  * @module
  */
 
-process.env.LANGSMITH_TRACING = 'true';
-
 import test from 'ava';
 
 import * as activities from './activities/langsmith';
 import { InMemoryRunCollector, withTracingWorker } from './helpers';
 import * as workflows from './workflows/langsmith';
+
+process.env.LANGSMITH_TRACING = 'true';
 
 test('continue-as-new: keeps the successor on the same trace with a distinct run id', async (t) => {
   const collector = new InMemoryRunCollector();

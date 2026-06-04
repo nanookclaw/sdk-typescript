@@ -15,8 +15,6 @@
  * @module
  */
 
-process.env.LANGSMITH_TRACING = 'true';
-
 import test from 'ava';
 import { RunTree } from 'langsmith/run_trees';
 import { getCurrentRunTree, traceable } from 'langsmith/traceable';
@@ -25,6 +23,8 @@ import { createClientInterceptor } from '../client-interceptor';
 import { HEADER_KEY, readContextHeader } from '../propagation';
 import type { EmitterConfig } from '../sinks';
 import { InMemoryRunCollector } from './helpers';
+
+process.env.LANGSMITH_TRACING = 'true';
 
 /** The client interceptor methods this test drives, each as `(input, next) => Promise`. */
 type InterceptorMethod = (input: unknown, next: (input: unknown) => Promise<unknown>) => Promise<unknown>;
@@ -78,7 +78,7 @@ test('client interceptor (addTemporalRuns: true): emits markers under the ambien
       await ic.describe({ ...base }, capture('describe'));
       return id;
     },
-    { name: 'user_root', client: collector.asClient(), tracingEnabled: true },
+    { name: 'user_root', client: collector.asClient(), tracingEnabled: true }
   )();
 
   // Each traced op emitted exactly one marker, parented under the ambient root.
@@ -128,7 +128,7 @@ test('client interceptor (addTemporalRuns: false): propagates context but emits 
       });
       return id;
     },
-    { name: 'user_root', client: collector.asClient(), tracingEnabled: true },
+    { name: 'user_root', client: collector.asClient(), tracingEnabled: true }
   )();
 
   t.is(collector.byName('StartWorkflow:W'), undefined);

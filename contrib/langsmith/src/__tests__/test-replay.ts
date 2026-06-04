@@ -2,7 +2,7 @@
  * Replay safety: replaying recorded history must not re-emit runs.
  *
  * The plugin's replay-safe run tree suppresses `postRun`/`patchRun` while
- * `workflowInfo().unsafe.isReplaying` is true, and its sinks are registered with
+ * `workflowInfo().unsafe.isReplayingHistoryEvents` is true, and its sinks are registered with
  * `callDuringReplay: false`. Together these guarantee a pure history replay
  * emits zero LangSmith runs — so the user's observability backend is never
  * flooded with duplicates on replay.
@@ -14,15 +14,15 @@
  * @module
  */
 
-process.env.LANGSMITH_TRACING = 'true';
-
-import { Worker, type ReplayWorkerOptions } from '@temporalio/worker';
 import test from 'ava';
+import { Worker, type ReplayWorkerOptions } from '@temporalio/worker';
 
+import { LangSmithPlugin } from '../index';
 import * as activities from './activities/langsmith';
 import { InMemoryRunCollector, WORKFLOWS_PATH, withTracingWorker } from './helpers';
-import { LangSmithPlugin } from '../index';
 import * as workflows from './workflows/langsmith';
+
+process.env.LANGSMITH_TRACING = 'true';
 
 test('replay safety: emits no runs when replaying recorded history', async (t) => {
   const live = new InMemoryRunCollector();

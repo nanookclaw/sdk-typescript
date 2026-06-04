@@ -16,8 +16,6 @@
  * @module
  */
 
-process.env.LANGSMITH_TRACING = 'true';
-
 import test from 'ava';
 import { RunTree } from 'langsmith/run_trees';
 import { getCurrentRunTree } from 'langsmith/traceable';
@@ -29,7 +27,7 @@ import { InMemoryRunCollector } from './helpers';
 
 type NexusHandler = (
   input: { service: string; operation: string; headers?: Record<string, string> },
-  next: (input: unknown) => Promise<unknown>,
+  next: (input: unknown) => Promise<unknown>
 ) => Promise<unknown>;
 
 /** Build a parent run and the encoded Nexus header carrying its context. */
@@ -57,7 +55,7 @@ test('Nexus inbound instrumentation (addTemporalRuns: true): opens a start-handl
     async () => {
       innerId = getCurrentRunTree(true)?.id;
       return { ok: true };
-    },
+    }
   );
 
   const run = collector.byName('RunStartNexusOperationHandler:NexusService/run_operation');
@@ -78,7 +76,7 @@ test('Nexus inbound instrumentation (addTemporalRuns: true): opens a cancel-hand
 
   await ic.cancelOperation(
     { service: 'NexusService', operation: 'run_operation', headers: { [HEADER_KEY]: encoded } },
-    async () => undefined,
+    async () => undefined
   );
 
   t.truthy(collector.byName('RunCancelNexusOperationHandler:NexusService/run_operation'));
@@ -98,7 +96,7 @@ test('Nexus inbound instrumentation (addTemporalRuns: false): installs the paren
     async () => {
       innerId = getCurrentRunTree(true)?.id;
       return undefined;
-    },
+    }
   );
 
   t.is(collector.byName('RunStartNexusOperationHandler:NexusService/run_operation'), undefined);

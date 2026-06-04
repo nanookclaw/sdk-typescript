@@ -16,10 +16,10 @@
  * @module
  */
 
+import type { Client as LangSmithClient } from 'langsmith';
 import { Client } from '@temporalio/client';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker, type WorkerOptions } from '@temporalio/worker';
-import type { Client as LangSmithClient } from 'langsmith';
 
 import { LangSmithPlugin, type LangSmithPluginOptions } from '../index';
 
@@ -36,6 +36,7 @@ export interface CollectedRun {
   dotted_order?: string;
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
+  end_time?: number | string;
   error?: string | null;
   tags?: string[];
   extra?: Record<string, unknown>;
@@ -180,11 +181,7 @@ export interface HarnessArgs<T> {
   /** Extra worker options (e.g. `maxCachedWorkflows`). */
   workerOptions?: Partial<WorkerOptions>;
   /** Body run with a plugin-enabled client + worker live. */
-  body: (ctx: {
-    client: Client;
-    taskQueue: string;
-    env: TestWorkflowEnvironment;
-  }) => Promise<T>;
+  body: (ctx: { client: Client; taskQueue: string; env: TestWorkflowEnvironment }) => Promise<T>;
 }
 
 /**
