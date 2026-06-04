@@ -55,8 +55,6 @@ export const startActivityRunName = (activityType: string): string => `StartActi
 export const runActivityRunName = (activityType: string): string => `RunActivity:${activityType}`;
 /** `StartChildWorkflow:<type>` — workflow-side child-start marker. */
 export const startChildWorkflowRunName = (workflowType: string): string => `StartChildWorkflow:${workflowType}`;
-/** `ContinueAsNew:<type>` — continue-as-new marker. */
-export const continueAsNewRunName = (workflowType: string): string => `ContinueAsNew:${workflowType}`;
 /** `StartNexusOperation:<service>/<op>` — workflow-side Nexus-start marker. */
 export const startNexusOperationRunName = (service: string, operation: string): string =>
   `StartNexusOperation:${service}/${operation}`;

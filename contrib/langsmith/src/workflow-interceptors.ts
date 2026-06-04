@@ -54,7 +54,6 @@ import {
   ReplaySafeRunTree,
   _RootReplaySafeRunTreeFactory,
   RUN_TYPE,
-  continueAsNewRunName,
   describeError,
   handleQueryRunName,
   handleSignalRunName,
@@ -441,15 +440,13 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
     );
   }
 
-  async continueAsNew(
+  continueAsNew(
     input: ContinueAsNewInput,
     next: Next<WorkflowOutboundCallsInterceptor, 'continueAsNew'>
   ): Promise<never> {
-    const ambient = this.ctx.ambient();
-    if (this.config.addTemporalRuns && ambient instanceof ReplaySafeRunTree) {
-      await emitMarker(ambient, continueAsNewRunName(workflowInfo().workflowType), { args: input.args });
-    }
-    const headers = withContextHeader(input.headers, contextHeaderObject(ambient));
+    // No run is emitted for continue-as-new (matching the Python plugin); only
+    // the ambient trace context is propagated so the successor stays on the trace.
+    const headers = withContextHeader(input.headers, contextHeaderObject(this.ctx.ambient()));
     return next({ ...input, headers });
   }
 
