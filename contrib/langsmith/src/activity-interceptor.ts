@@ -158,10 +158,18 @@ export function createActivityInboundInterceptor(
 // defensively by the plugin.
 // ---------------------------------------------------------------------------
 
-interface NexusOperationInput {
+/**
+ * The Nexus operation context the SDK passes to a handler interceptor. Both
+ * `startOperation` and `cancelOperation` receive `{ ctx, ... }`, where `ctx`
+ * carries the service / operation names and the plain-string headers.
+ */
+interface NexusOperationContext {
   readonly service: string;
   readonly operation: string;
   readonly headers?: Record<string, string>;
+}
+interface NexusOperationInput {
+  readonly ctx: NexusOperationContext;
 }
 type NexusNext = (input: NexusOperationInput) => Promise<unknown>;
 
@@ -171,7 +179,7 @@ interface NexusInboundInterceptor {
 }
 
 function nexusContext(input: NexusOperationInput): LangSmithTraceContext | undefined {
-  return decodeContextString(input.headers?.[HEADER_KEY]);
+  return decodeContextString(input.ctx.headers?.[HEADER_KEY]);
 }
 
 /**
@@ -191,7 +199,7 @@ export function createNexusInboundInterceptor(config: EmitterConfig): NexusInbou
         return parent ? withRunTree(parent, () => next(input)) : next(input);
       }
       const run = new RunTree({
-        name: nameOf(input.service, input.operation),
+        name: nameOf(input.ctx.service, input.ctx.operation),
         run_type: RUN_TYPE.CHAIN,
         parent_run: parent,
         client: config.client as unknown as Client,

@@ -17,9 +17,7 @@ import {
   defineQuery,
   defineSignal,
   defineUpdate,
-  executeChild,
   proxyActivities,
-  proxyLocalActivities,
   setHandler,
   startChild,
   workflowInfo,
@@ -28,19 +26,7 @@ import { ApplicationFailureCategory } from '@temporalio/common';
 
 import type * as activities from '../activities/langsmith';
 
-const {
-  simpleActivity,
-  plainActivity,
-  traceableActivity,
-  nestedTraceableActivity,
-  failingActivity,
-  benignFailingActivity,
-} = proxyActivities<typeof activities>({
-  startToCloseTimeout: '1 minute',
-  retry: { maximumAttempts: 1 },
-});
-
-const { simpleActivity: simpleLocalActivity } = proxyLocalActivities<typeof activities>({
+const { simpleActivity, plainActivity, failingActivity, benignFailingActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '1 minute',
   retry: { maximumAttempts: 1 },
 });
@@ -80,30 +66,6 @@ export async function WorkflowBodyTraceableWorkflow(input: string): Promise<stri
  */
 export async function PlainWorkflow(input: string): Promise<string> {
   return plainActivity(input);
-}
-
-/** Runs the one-level activity chain (`traceable_activity` → `inner_llm_call`). Also used as a child workflow. */
-export async function TraceableActivityWorkflow(input: string): Promise<string> {
-  return traceableActivity(input);
-}
-
-/**
- * The comprehensive workflow: one (deeper) activity then a child workflow.
- * Driven from a client-side `user_pipeline` traceable in the test so the whole
- * tree threads under a single user-owned root.
- */
-export async function ComprehensiveWorkflow(input: string): Promise<string> {
-  const a = await nestedTraceableActivity(input);
-  const b = await executeChild(TraceableActivityWorkflow, {
-    args: [input],
-    workflowId: `${workflowInfo().workflowId}-child`,
-  });
-  return `${a}|${b}`;
-}
-
-/** Schedules a local activity, to exercise the `scheduleLocalActivity` outbound path. */
-export async function LocalActivityWorkflow(input: string): Promise<string> {
-  return simpleLocalActivity(input);
 }
 
 export const mySignal = defineSignal<[string]>('my_signal');

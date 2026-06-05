@@ -62,7 +62,7 @@ interface SignalWithStartInput extends WithHeaders {
   readonly signalName: string;
 }
 interface QueryInput extends WithHeaders {
-  readonly queryName: string;
+  readonly queryType: string;
 }
 interface UpdateInput extends WithHeaders {
   readonly updateName?: string;
@@ -161,7 +161,7 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
       return parentMessage(input, next, signalWithStartRunName(input.workflowType));
     },
     query(input: QueryInput, next: NextFn<QueryInput, unknown>): Promise<unknown> {
-      return parentMessage(input, next, queryWorkflowRunName(input.queryName));
+      return parentMessage(input, next, queryWorkflowRunName(input.queryType));
     },
     startUpdate(input: UpdateInput, next: NextFn<UpdateInput, unknown>): Promise<unknown> {
       return parentMessage(input, next, startWorkflowUpdateRunName(updateName(input)));

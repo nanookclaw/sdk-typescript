@@ -306,8 +306,13 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
 
   async handleSignal(input: SignalInput, next: Next<WorkflowInboundCallsInterceptor, 'handleSignal'>): Promise<void> {
     const parent = reconstructParent(input.headers);
-    await this.runInbound(handleSignalRunName(input.signalName), RUN_TYPE.CHAIN, parent, { args: input.args }, () =>
-      next(input)
+    await this.runInbound(
+      handleSignalRunName(input.signalName),
+      RUN_TYPE.CHAIN,
+      parent,
+      { args: input.args },
+      () => next(input),
+      true
     );
   }
 
@@ -316,8 +321,13 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
       return next(input);
     }
     const parent = reconstructParent(input.headers);
-    return this.runInbound(handleQueryRunName(input.queryName), RUN_TYPE.CHAIN, parent, { args: input.args }, () =>
-      next(input)
+    return this.runInbound(
+      handleQueryRunName(input.queryName),
+      RUN_TYPE.CHAIN,
+      parent,
+      { args: input.args },
+      () => next(input),
+      true
     );
   }
 
@@ -326,17 +336,25 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
     next: Next<WorkflowInboundCallsInterceptor, 'handleUpdate'>
   ): Promise<unknown> {
     const parent = reconstructParent(input.headers);
-    return this.runInbound(handleUpdateRunName(updateName(input)), RUN_TYPE.CHAIN, parent, { args: input.args }, () =>
-      next(input)
+    return this.runInbound(
+      handleUpdateRunName(updateName(input)),
+      RUN_TYPE.CHAIN,
+      parent,
+      { args: input.args },
+      () => next(input),
+      true
     );
   }
 
   validateUpdate(input: UpdateInput, next: Next<WorkflowInboundCallsInterceptor, 'validateUpdate'>): void {
     if (!this.config.addTemporalRuns) {
-      // Synthetic anchor-only root keeps a validator-body `traceable` off the
-      // no-parent `crypto` path (see runInbound). Validators are synchronous, so
-      // install it via the stack-based `run`, not the async `withAmbient`.
-      this.ctx.run(syntheticRoot(), () => next(input));
+      // Propagation only: install the reconstructed parent (or a synthetic anchor
+      // when none was propagated, to keep a validator-body `traceable` off the
+      // no-parent `crypto` path) so the validator body nests under the update's
+      // trace. Validators are synchronous, so install via the stack-based `run`,
+      // not the async `withAmbient`.
+      const ambient = asReplaySafeAnchor(reconstructParent(input.headers)) ?? syntheticRoot();
+      this.ctx.run(ambient, () => next(input));
       return;
     }
     const parent = reconstructParent(input.headers);
@@ -351,10 +369,11 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
       inputs: { args: input.args },
     });
     // Validators are synchronous and must not be made async; emit start/end
-    // around the synchronous call.
+    // around the synchronous call, with the run installed on the stack so a
+    // `traceable` in the validator body nests under it.
     void run.postRun();
     try {
-      next(input);
+      this.ctx.run(run, () => next(input));
       void run.end({});
     } catch (err) {
       void run.end(undefined, describeError(err));
@@ -364,22 +383,31 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
     void run.patchRun();
   }
 
+  /**
+   * Open the inbound run, install it as the active run for `next`, and close it.
+   *
+   * `scoped` handlers install the run on the synchronous stack so a handler running
+   * concurrently with the workflow body cannot leak its run into the body's ambient;
+   * `execute` (scoped: false) installs a persistent ambient that survives the body's
+   * awaits.
+   */
   private async runInbound(
     name: string,
     runType: string,
     parent: RunTree | undefined,
     inputs: Record<string, unknown>,
-    next: () => Promise<unknown>
+    next: () => Promise<unknown>,
+    scoped = false
   ): Promise<unknown> {
     if (!this.config.addTemporalRuns) {
-      // Propagation only: install the reconstructed parent as ambient so user
-      // `traceable` runs nest under it; never emit a Temporal-operation run.
+      // Propagation only: install the reconstructed parent as the active run so
+      // user `traceable` runs nest under it; never emit a Temporal-operation run.
       // With no propagated parent, install a synthetic anchor instead of
       // `undefined` so a workflow-body `traceable` takes LangSmith's
       // `createChild` branch (deterministic id) rather than the no-parent branch
       // that mints a uuid via `crypto`, which the isolate lacks.
       const ambient = asReplaySafeAnchor(parent) ?? syntheticRoot();
-      return this.ctx.withAmbient(ambient, next);
+      return scoped ? this.ctx.run(ambient, next) : this.ctx.withAmbient(ambient, next);
     }
     const anchor = asReplaySafeAnchor(parent);
     const run = new ReplaySafeRunTree({
@@ -392,7 +420,7 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
       inputs,
     });
     await run.postRun();
-    return this.ctx.withAmbient(run, async () => {
+    const body = async (): Promise<unknown> => {
       try {
         const result = await next();
         await run.end(asOutputs(result));
@@ -403,7 +431,8 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
         await run.patchRun();
         throw err;
       }
-    });
+    };
+    return scoped ? this.ctx.run(run, body) : this.ctx.withAmbient(run, body);
   }
 }
 

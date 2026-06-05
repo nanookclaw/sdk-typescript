@@ -1,26 +1,17 @@
 /**
- * The primary end-to-end test. Boots a real local Temporal server
- * (`TestWorkflowEnvironment.createLocal`) with the plugin on the client and the
- * worker, runs workflows whose activity / child-workflow bodies carry unchanged
- * native `traceable` instrumentation, captures every emitted run in an
- * {@link InMemoryRunCollector}, and asserts the **exact** run hierarchy with
- * `deepEqual` on {@link dumpTraces}.
- *
- * Two hierarchies are pinned:
- *  - Tree A (`addTemporalRuns: true`): Temporal-operation runs (`StartWorkflow:`,
- *    `RunActivity:`, …) interleave with the user's `traceable` runs.
- *  - Tree B (`addTemporalRuns: false`): only the user's `traceable` runs appear,
- *    yet they still nest correctly because the trace context propagates across
- *    every boundary.
+ * Run-hierarchy edge cases that the comprehensive trace-tree test
+ * (test-comprehensive-tree.ts) cannot cover, because its workflow always runs
+ * under a client-side `user_pipeline` root and its assertion is name-only:
+ *  - a workflow started with NO ambient run (two separate roots),
+ *  - a root workflow-body `traceable` with no propagated parent (the `crypto`
+ *    regression — must not crash, and emits no spurious synthetic root),
+ *  - plugin options (projectName / tags / scrubbed metadata) carried onto runs
+ *    (a per-field check `dumpTraces` does not render).
  *
  * @module
  */
 
-// Force LangSmith's own tracing gate on for this process so the user-side
-// `traceable` roots emit deterministically regardless of ambient env. (The
-// plugin-level kill switch is tested separately in test-env.ts.)
 import test from 'ava';
-import { traceable } from 'langsmith/traceable';
 
 import * as activities from './activities/langsmith';
 import { InMemoryRunCollector, dumpTraces, withTracingWorker } from './helpers';
@@ -30,42 +21,9 @@ process.env.LANGSMITH_TRACING = 'true';
 
 const ALL_ACTIVITIES = {
   simpleActivity: activities.simpleActivity,
-  plainActivity: activities.plainActivity,
-  traceableActivity: activities.traceableActivity,
-  nestedTraceableActivity: activities.nestedTraceableActivity,
-  failingActivity: activities.failingActivity,
-  benignFailingActivity: activities.benignFailingActivity,
 };
 
-/** Tree A — addTemporalRuns: true. */
-const TREE_A = [
-  'user_pipeline',
-  '  StartWorkflow:ComprehensiveWorkflow',
-  '  RunWorkflow:ComprehensiveWorkflow',
-  '    StartActivity:nestedTraceableActivity',
-  '    RunActivity:nestedTraceableActivity',
-  '      nested_traceable_activity',
-  '        outer_chain',
-  '          inner_llm_call',
-  '    StartChildWorkflow:TraceableActivityWorkflow',
-  '    RunWorkflow:TraceableActivityWorkflow',
-  '      StartActivity:traceableActivity',
-  '      RunActivity:traceableActivity',
-  '        traceable_activity',
-  '          inner_llm_call',
-].join('\n');
-
-/** Tree B — addTemporalRuns: false (only user `traceable` runs, still parented). */
-const TREE_B = [
-  'user_pipeline',
-  '  nested_traceable_activity',
-  '    outer_chain',
-  '      inner_llm_call',
-  '  traceable_activity',
-  '    inner_llm_call',
-].join('\n');
-
-/** Basic single-activity workflow with addTemporalRuns on — two roots, no ambient. */
+/** Basic single-activity workflow with addTemporalRuns on, started with no ambient — two roots. */
 const SIMPLE_TREE = [
   'StartWorkflow:SimpleWorkflow',
   'RunWorkflow:SimpleWorkflow',
@@ -73,82 +31,10 @@ const SIMPLE_TREE = [
   '  RunActivity:simpleActivity',
 ].join('\n');
 
-/**
- * Workflow-body `traceable` with addTemporalRuns on. The `workflow_inner_call`
- * run is created *inside the V8 isolate* (not an activity), so it can only nest
- * under `RunWorkflow:` if the plugin's installed LangSmith context provider
- * resolved the workflow run as its parent.
- */
-const WORKFLOW_BODY_TREE_A = [
-  'user_pipeline',
-  '  StartWorkflow:WorkflowBodyTraceableWorkflow',
-  '  RunWorkflow:WorkflowBodyTraceableWorkflow',
-  '    workflow_inner_call',
-].join('\n');
-
-/** Workflow-body `traceable` with addTemporalRuns off — still parented via the propagated context. */
-const WORKFLOW_BODY_TREE_B = ['user_pipeline', '  workflow_inner_call'].join('\n');
-
-/**
- * Workflow-body `traceable` with addTemporalRuns off and NO client-side parent —
- * just the user's run, with no spurious synthetic root (the anchor that keeps the
- * isolate off the no-parent `crypto` path stays invisible).
- */
+/** Root workflow-body `traceable`, no propagated parent — just the user run, no synthetic root. */
 const WORKFLOW_BODY_ROOT_TREE = ['workflow_inner_call'].join('\n');
 
-/** Local-activity workflow with addTemporalRuns on — exercises the `scheduleLocalActivity` outbound path. */
-const LOCAL_ACTIVITY_TREE = [
-  'StartWorkflow:LocalActivityWorkflow',
-  'RunWorkflow:LocalActivityWorkflow',
-  '  StartActivity:simpleActivity',
-  '  RunActivity:simpleActivity',
-].join('\n');
-
-test('comprehensive run hierarchy: emits the full Temporal-run hierarchy under a user root (addTemporalRuns: true)', async (t) => {
-  const collector = new InMemoryRunCollector();
-  await withTracingWorker({
-    collector,
-    options: { addTemporalRuns: true },
-    activities: ALL_ACTIVITIES,
-    body: async ({ client, taskQueue }) => {
-      const pipeline = traceable(
-        async () =>
-          client.workflow.execute(workflows.ComprehensiveWorkflow, {
-            taskQueue,
-            workflowId: `comprehensive-true-${Date.now()}`,
-            args: ['hello'],
-          }),
-        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
-      );
-      await pipeline();
-    },
-  });
-  t.deepEqual(dumpTraces(collector.records), TREE_A);
-});
-
-test('comprehensive run hierarchy: emits only the traceable hierarchy but still parents it (addTemporalRuns: false)', async (t) => {
-  const collector = new InMemoryRunCollector();
-  await withTracingWorker({
-    collector,
-    options: { addTemporalRuns: false },
-    activities: ALL_ACTIVITIES,
-    body: async ({ client, taskQueue }) => {
-      const pipeline = traceable(
-        async () =>
-          client.workflow.execute(workflows.ComprehensiveWorkflow, {
-            taskQueue,
-            workflowId: `comprehensive-false-${Date.now()}`,
-            args: ['hello'],
-          }),
-        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
-      );
-      await pipeline();
-    },
-  });
-  t.deepEqual(dumpTraces(collector.records), TREE_B);
-});
-
-test('comprehensive run hierarchy: emits the basic SimpleWorkflow tree with no ambient (two roots)', async (t) => {
+test('emits the basic SimpleWorkflow tree with no ambient (two roots)', async (t) => {
   const collector = new InMemoryRunCollector();
   await withTracingWorker({
     collector,
@@ -165,85 +51,15 @@ test('comprehensive run hierarchy: emits the basic SimpleWorkflow tree with no a
   t.deepEqual(dumpTraces(collector.records), SIMPLE_TREE);
 });
 
-test('comprehensive run hierarchy: emits the local-activity hierarchy (scheduleLocalActivity outbound path)', async (t) => {
-  const collector = new InMemoryRunCollector();
-  await withTracingWorker({
-    collector,
-    options: { addTemporalRuns: true },
-    activities: ALL_ACTIVITIES,
-    body: async ({ client, taskQueue }) => {
-      await client.workflow.execute(workflows.LocalActivityWorkflow, {
-        taskQueue,
-        workflowId: `local-activity-${Date.now()}`,
-        args: ['hi'],
-      });
-    },
-  });
-  t.deepEqual(dumpTraces(collector.records), LOCAL_ACTIVITY_TREE);
-});
-
 /**
- * The in-isolate path: a native `traceable` invoked **inside a workflow body**.
- * Unlike the activity-body cases above (which run in the real Node worker process
- * where LangSmith's own `AsyncLocalStorage` works), this exercises the plugin's
- * isolate-safe context provider — `WorkflowContextManager.run`/`stack` installed
- * via `AsyncLocalStorageProviderSingleton`. Without it, `getCurrentRunTree()`
- * inside the isolate returns `undefined` and the run would not nest. This is the
- * subsystem behind the "works unchanged inside workflows" claim.
+ * A workflow-body `traceable` with addTemporalRuns off and NO client-side
+ * `traceable` wrapper, so no parent is propagated in. Without the synthetic
+ * anchor root, LangSmith takes its no-parent branch and mints a uuid via
+ * `crypto`, which the workflow isolate lacks — crashing the Workflow Task. The
+ * synthetic root keeps it on the `createChild` branch and stays invisible, so
+ * only the user's `workflow_inner_call` run is emitted.
  */
-test('workflow-body traceable nests via the isolate context provider: nests the workflow-body run under RunWorkflow (addTemporalRuns: true)', async (t) => {
-  const collector = new InMemoryRunCollector();
-  await withTracingWorker({
-    collector,
-    options: { addTemporalRuns: true },
-    activities: ALL_ACTIVITIES,
-    body: async ({ client, taskQueue }) => {
-      const pipeline = traceable(
-        async () =>
-          client.workflow.execute(workflows.WorkflowBodyTraceableWorkflow, {
-            taskQueue,
-            workflowId: `wf-body-true-${Date.now()}`,
-            args: ['hello'],
-          }),
-        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
-      );
-      await pipeline();
-    },
-  });
-  t.deepEqual(dumpTraces(collector.records), WORKFLOW_BODY_TREE_A);
-});
-
-test('workflow-body traceable nests via the isolate context provider: nests the workflow-body run under the propagated parent (addTemporalRuns: false)', async (t) => {
-  const collector = new InMemoryRunCollector();
-  await withTracingWorker({
-    collector,
-    options: { addTemporalRuns: false },
-    activities: ALL_ACTIVITIES,
-    body: async ({ client, taskQueue }) => {
-      const pipeline = traceable(
-        async () =>
-          client.workflow.execute(workflows.WorkflowBodyTraceableWorkflow, {
-            taskQueue,
-            workflowId: `wf-body-false-${Date.now()}`,
-            args: ['hello'],
-          }),
-        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
-      );
-      await pipeline();
-    },
-  });
-  t.deepEqual(dumpTraces(collector.records), WORKFLOW_BODY_TREE_B);
-});
-
-/**
- * The root-body path: a workflow-body `traceable` with addTemporalRuns off and
- * NO client-side `traceable` wrapper, so no parent context is propagated in.
- * Without the synthetic anchor root, LangSmith would take its no-parent branch
- * and mint a uuid via `crypto`, which the isolate lacks — crashing the Workflow
- * Task. The synthetic root keeps it on the `createChild` branch and stays
- * invisible, so only the user's `workflow_inner_call` run is emitted.
- */
-test('workflow-body traceable with no propagated parent does not crash and emits just the user run (addTemporalRuns: false)', async (t) => {
+test('root workflow-body traceable (no propagated parent) does not crash and emits just the user run', async (t) => {
   const collector = new InMemoryRunCollector();
   await withTracingWorker({
     collector,
