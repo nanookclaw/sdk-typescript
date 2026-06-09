@@ -25,5 +25,3 @@
 
 export { LangSmithPlugin } from './plugin';
 export type { LangSmithPluginOptions } from './plugin';
-export { createLangSmithSinks } from './sinks';
-export type { LangSmithSinks, SerializedRun } from './sinks';

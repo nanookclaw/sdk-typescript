@@ -68,7 +68,7 @@ const SENSITIVE_KEY_PREFIXES: readonly string[] = [
 ];
 
 /** Returns true when `key` looks like a credential-bearing header/metadata key. */
-export function isSensitiveKey(key: string): boolean {
+function isSensitiveKey(key: string): boolean {
   const lower = key.toLowerCase();
   return SENSITIVE_KEY_PREFIXES.some((prefix) => lower.startsWith(prefix));
 }
@@ -167,32 +167,14 @@ export function readContextHeader(headers: Record<string, Payload> | undefined):
 
 /**
  * Tracing gate the plugin consults before emitting any run. Tracing is OFF by
- * default and turns ON only when LangSmith's own tracing env vars are set,
- * matching the underlying langsmith library exactly. The plugin invents no env
- * semantics of its own — it delegates to {@link langsmithIsTracingEnabled},
- * which replicates langsmith's `isTracingEnabled`.
- */
-export function isTracingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return langsmithIsTracingEnabled(env);
-}
-
-/**
- * Verbatim replica of langsmith's `isTracingEnabled` (langsmith 0.7.x,
- * `dist/env.cjs`): tracing is enabled only when one of `TRACING_V2` / `TRACING`
- * resolves — via the `LANGSMITH_` / `LANGCHAIN_` prefixes langsmith's
- * `getLangSmithEnvironmentVariable` checks, in that precedence — to exactly the
+ * default and turns ON only when one of `TRACING_V2` / `TRACING` resolves — via
+ * the `LANGSMITH_` / `LANGCHAIN_` prefixes, in that precedence — to exactly the
  * string `"true"`.
  *
- * TODO: langsmith 0.7.x does not publicly export `isTracingEnabled` (it has no
- * `./env` entry in its `exports` map), so the logic is replicated here. When
- * langsmith exports it, delete this replica and import its function in one line:
- *
- *   import { isTracingEnabled as langsmithIsTracingEnabled } from 'langsmith/env';
- *
- * langsmith's `isTracingEnabled` reads `process.env` itself, so the `env`
- * argument below is dropped at the same time.
+ * Replicates langsmith's own `isTracingEnabled`, which langsmith 0.7.x does not
+ * publicly export; replace this with a direct import once it does.
  */
-function langsmithIsTracingEnabled(env: NodeJS.ProcessEnv): boolean {
+export function isTracingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const getLangSmithEnvironmentVariable = (name: string): string | undefined =>
     env[`LANGSMITH_${name}`] || env[`LANGCHAIN_${name}`];
   return ['TRACING_V2', 'TRACING'].some((name) => getLangSmithEnvironmentVariable(name) === 'true');

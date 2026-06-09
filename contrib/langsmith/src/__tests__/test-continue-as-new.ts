@@ -16,7 +16,7 @@
 import test from 'ava';
 
 import * as activities from './activities/langsmith';
-import { InMemoryRunCollector, withTracingWorker } from './helpers';
+import { InMemoryRunCollector, dumpTraces, withTracingWorker } from './helpers';
 import * as workflows from './workflows/langsmith';
 
 process.env.LANGSMITH_TRACING = 'true';
@@ -49,4 +49,33 @@ test('continue-as-new: keeps the successor on the same trace with a distinct run
   // No ContinueAsNew run is emitted (parity with the Python plugin) — only the
   // trace context is propagated, which the matching trace_ids above confirm.
   t.falsy(collector.byName('ContinueAsNew:ContinueAsNewWorkflow'));
+});
+
+// With `addTemporalRuns: false` and no client-side `traceable` wrapping the
+// start, nothing is propagated into the workflow, so the inbound installs a
+// synthetic root that is never emitted. The `continueAsNew` interceptor must
+// therefore propagate no trace context, letting the successor install its own
+// fresh synthetic root so its user `traceable` run stays a proper root instead
+// of dangling under the predecessor's never-emitted parent.
+test('continue-as-new: successor user runs stay roots when no parent was propagated', async (t) => {
+  const collector = new InMemoryRunCollector();
+  await withTracingWorker({
+    collector,
+    options: { addTemporalRuns: false },
+    activities: { simpleActivity: activities.simpleActivity },
+    body: async ({ client, taskQueue }) =>
+      client.workflow.execute(workflows.ContinueAsNewTraceableWorkflow, {
+        taskQueue,
+        workflowId: `can-root-${Date.now()}`,
+        args: [0],
+      }),
+  });
+
+  const inner = collector.byName('workflow_inner_call');
+  t.truthy(inner);
+  // The successor's user run is a real root, not dangling under the
+  // predecessor's never-emitted synthetic root.
+  t.is(inner!.parent_run_id, undefined);
+  // dumpTraces throws on a dangling parent_run_id; no throw confirms the link.
+  t.notThrows(() => dumpTraces(collector.records));
 });

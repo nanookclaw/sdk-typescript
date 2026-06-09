@@ -42,22 +42,18 @@ import {
   type UpdateInput,
 } from '@temporalio/workflow';
 
-import {
-  HEADER_KEY,
-  encodeContextString,
-  isInternalQuery,
-  readContextHeader,
-  withContextHeader,
-  type LangSmithTraceContext,
-} from './propagation';
+import { HEADER_KEY, encodeContextString, isInternalQuery, readContextHeader, withContextHeader } from './propagation';
 import {
   ReplaySafeRunTree,
   _RootReplaySafeRunTreeFactory,
   RUN_TYPE,
+  asOutputs,
   describeError,
+  emitMarkerRun,
   handleQueryRunName,
   handleSignalRunName,
   handleUpdateRunName,
+  runHeaders,
   runWorkflowRunName,
   signalChildWorkflowRunName,
   signalExternalWorkflowRunName,
@@ -98,20 +94,14 @@ function readConfig(): WorkflowLangSmithConfig {
 /**
  * Synchronous, isolate-safe replacement for LangSmith's async-context store.
  *
- * Two layers:
  *  - `workflowAmbient` persists across `await` boundaries for the lifetime of
- *    the workflow / handler call (so outbound interceptors and post-await
- *    `traceable` calls find a parent).
+ *    the workflow / handler call.
  *  - `stack` tracks synchronous `traceable` nesting via save/restore around
- *    `run()`. Because LangSmith fixes a child's parent at the synchronous
- *    moment the wrapped function is invoked (not when it later awaits), the
- *    common `return await inner(...)` pattern nests correctly.
+ *    `run()`, so the common `return await inner(...)` pattern nests correctly.
  *
- * Best-effort caveat: under `Promise.all` fan-out or `traceable` calls made
- * *after* an `await` in the same scope, parenting falls back to the workflow
- * ambient. This is permissible non-determinism — it never affects workflow
- * history or control flow, only the trace shape — and is documented in the
- * README.
+ * Under `Promise.all` fan-out, or `traceable` calls made *after* an `await` in
+ * the same scope, parenting falls back to the workflow ambient — permissible
+ * non-determinism that affects only the trace shape, never workflow history.
  */
 class WorkflowContextManager {
   private workflowAmbient: RunTree | undefined;
@@ -122,16 +112,8 @@ class WorkflowContextManager {
   }
 
   /**
-   * Push `context`, run `fn`, pop in `finally`, and **return `fn`'s result**.
-   *
-   * Returning the result is the `AsyncLocalStorage.run` contract that LangSmith
-   * relies on: `traceable` wraps the user function as
-   * `provider.run(child, () => fn(...args))` and returns that value, so a `run`
-   * that returned `void` would make every traceable-wrapped function resolve to
-   * `undefined` inside a workflow. For an async `fn`, the returned promise is
-   * captured synchronously (before the `finally` pops the stack), which is why
-   * the synchronous prefix nests correctly while post-`await` work falls back to
-   * the workflow ambient.
+   * Push `context`, run `fn`, pop in `finally`, and return `fn`'s result — the
+   * `AsyncLocalStorage.run` contract langsmith relies on.
    */
   run<T>(context: RunTree | undefined, fn: () => T): T {
     this.stack.push(context);
@@ -167,10 +149,8 @@ function ensureProviderInstalled(manager: WorkflowContextManager): void {
   providerInstalled = true;
   // LangSmith's `AsyncLocalStorageInterface` requires exactly two members,
   // `getStore` and `run` (it never calls `enterWith`), so we provide only those.
-  // `traceable` resolves its parent via `getStore()` and pushes the child run for
-  // the duration of the wrapped call via `run(child, fn)`; both are exercised by
-  // a workflow-body `traceable` (see comprehensive.test.ts). The cast bridges the
-  // generic `run<T>` signature to the interface's `run: (ctx, () => void) => void`.
+  // The cast bridges the generic `run<T>` signature to the interface's
+  // `run: (ctx, () => void) => void`.
   AsyncLocalStorageProviderSingleton.initializeGlobalInstance({
     getStore: () => manager.getStore(),
     run: <T>(context: RunTree | undefined, fn: () => T): T => manager.run(context as RunTree | undefined, fn),
@@ -178,15 +158,13 @@ function ensureProviderInstalled(manager: WorkflowContextManager): void {
 }
 
 /**
- * Module-level singleton context manager. One instance is shared by the
- * installed LangSmith provider, the {@link AsyncLocalStorage} shim below, and
- * every workflow inbound/outbound interceptor created by {@link interceptors}.
- * Sharing matters: the global LangSmith provider is installed exactly once (the
- * SDK's `initializeGlobalInstance` is first-install-wins), so a *per-call*
- * manager would desync from that provider on the second workflow execution in a
- * reused isolate context — `getCurrentRunTree()` would read a stale manager and
- * a workflow-body `traceable` would fail to nest. A single shared manager keeps
- * the provider's `getStore()` and the interceptors' `withAmbient()` in lockstep.
+ * Module-level singleton context manager, shared within a single Workflow
+ * Execution by the installed LangSmith provider, the {@link AsyncLocalStorage}
+ * shim below, and every inbound/outbound interceptor created by
+ * {@link interceptors}. One shared instance keeps the provider's `getStore()`
+ * and the interceptors' `withAmbient()` reading and writing the same store, so a
+ * workflow-body `traceable` resolves its parent through the same context the
+ * interceptors install.
  */
 const sharedManager = new WorkflowContextManager();
 ensureProviderInstalled(sharedManager);
@@ -270,20 +248,14 @@ function syntheticRoot(): _RootReplaySafeRunTreeFactory {
   return new _RootReplaySafeRunTreeFactory({ name: workflowInfo().workflowType, run_type: RUN_TYPE.CHAIN });
 }
 
-function contextHeaderObject(run: RunTree | undefined): LangSmithTraceContext | undefined {
-  return run ? (run.toHeaders() as LangSmithTraceContext) : undefined;
-}
-
-/** Emit a short-lived marker run (post + patch) as a child of `parent`. */
+/** Emit a short-lived marker run as a child of `parent`. */
 async function emitMarker(
   parent: ReplaySafeRunTree,
   name: string,
   inputs: Record<string, unknown>
 ): Promise<ReplaySafeRunTree> {
   const marker = parent.createChild({ name, run_type: RUN_TYPE.CHAIN, inputs });
-  await marker.postRun();
-  await marker.end({});
-  await marker.patchRun();
+  await emitMarkerRun(marker);
   return marker;
 }
 
@@ -337,7 +309,7 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
   ): Promise<unknown> {
     const parent = reconstructParent(input.headers);
     return this.runInbound(
-      handleUpdateRunName(updateName(input)),
+      handleUpdateRunName(input.name),
       RUN_TYPE.CHAIN,
       parent,
       { args: input.args },
@@ -360,7 +332,7 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
     const parent = reconstructParent(input.headers);
     const anchor = asReplaySafeAnchor(parent);
     const run = new ReplaySafeRunTree({
-      name: validateUpdateRunName(updateName(input)),
+      name: validateUpdateRunName(input.name),
       run_type: RUN_TYPE.CHAIN,
       parent_run: anchor,
       project_name: this.config.projectName,
@@ -474,8 +446,13 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
     next: Next<WorkflowOutboundCallsInterceptor, 'continueAsNew'>
   ): Promise<never> {
     // No run is emitted for continue-as-new (matching the Python plugin); only
-    // the ambient trace context is propagated so the successor stays on the trace.
-    const headers = withContextHeader(input.headers, contextHeaderObject(this.ctx.ambient()));
+    // the ambient trace context is propagated so the successor stays on the
+    // trace. A synthetic root is never emitted, so propagating it would dangle
+    // the successor's runs under a parent that does not exist — propagate nothing
+    // and let the successor install its own fresh synthetic root.
+    const ambient = this.ctx.ambient();
+    const context = ambient instanceof _RootReplaySafeRunTreeFactory ? undefined : runHeaders(ambient);
+    const headers = withContextHeader(input.headers, context);
     return next({ ...input, headers });
   }
 
@@ -498,7 +475,7 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
     if (this.config.addTemporalRuns && ambient instanceof ReplaySafeRunTree) {
       await emitMarker(ambient, startNexusOperationRunName(input.service, input.operation), {});
     }
-    const ctx = contextHeaderObject(ambient);
+    const ctx = runHeaders(ambient);
     const headers = ctx ? { ...input.headers, [HEADER_KEY]: encodeContextString(ctx) } : input.headers;
     return next({ ...input, headers });
   }
@@ -513,7 +490,7 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
     if (this.config.addTemporalRuns && ambient instanceof ReplaySafeRunTree) {
       await emitMarker(ambient, name, { args: input.args ?? [] });
     }
-    const headers = withContextHeader(input.headers, contextHeaderObject(ambient));
+    const headers = withContextHeader(input.headers, runHeaders(ambient));
     return next(headers);
   }
 
@@ -526,30 +503,11 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
     const ambient = this.ctx.ambient();
     let propagate: RunTree | undefined = ambient;
     if (this.config.addTemporalRuns && ambient instanceof ReplaySafeRunTree) {
-      const marker = ambient.createChild({ name, run_type: RUN_TYPE.CHAIN, inputs: { args: input.args ?? [] } });
-      await marker.postRun();
-      await marker.end({});
-      await marker.patchRun();
-      propagate = marker;
+      propagate = await emitMarker(ambient, name, { args: input.args ?? [] });
     }
-    const headers = withContextHeader(input.headers, contextHeaderObject(propagate));
+    const headers = withContextHeader(input.headers, runHeaders(propagate));
     return next(headers);
   }
-}
-
-/**
- * Resolve the update name from the SDK's {@link UpdateInput}. The SDK guarantees
- * `name` is always present, so no fallback is needed.
- */
-function updateName(input: UpdateInput): string {
-  return input.name;
-}
-
-function asOutputs(result: unknown): Record<string, unknown> {
-  if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
-    return result as Record<string, unknown>;
-  }
-  return { result };
 }
 
 /**
@@ -557,9 +515,6 @@ function asOutputs(result: unknown): Record<string, unknown> {
  * workflow in the bundle (registered via the plugin's `workflowModules`).
  */
 export function interceptors(): WorkflowInterceptors {
-  // Reuse the module-level {@link sharedManager} (installed as the LangSmith
-  // provider at module load) so the provider's `getStore()` and these
-  // interceptors' `withAmbient()` operate on the same store.
   const config = readConfig();
   return {
     inbound: [new LangSmithWorkflowInbound(sharedManager, config)],

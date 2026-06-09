@@ -30,7 +30,7 @@ import type { Client } from 'langsmith';
 import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
 import { proxySinks, uuid4, workflowInfo } from '@temporalio/workflow';
 
-import { scrubSensitive } from './propagation';
+import { scrubSensitive, type LangSmithTraceContext } from './propagation';
 import type { LangSmithSinks, SerializedRun } from './sinks';
 
 /** LangSmith run-type constants used for Temporal-operation runs. */
@@ -92,17 +92,9 @@ export const startUpdateWithStartRunName = (updateName: string): string => `Star
 // ---------------------------------------------------------------------------
 
 /**
- * Deterministic current time (epoch ms) from the isolate clock.
- *
- * Uses `Date.now()` rather than `workflowInfo().unsafe.now()`: inside the
- * workflow isolate the Temporal SDK shims `Date.now()` to a value that is set
- * on the first invocation of each Workflow Task and stays constant for the
- * duration of the task and during replay — exactly the replay-safe clock we
- * need. `unsafe.now()` is, by contrast, the *non-deterministic* real wall
- * clock (and is not even exposed as a callable in every SDK build), so it must
- * never drive run timestamps. In the worker process (activity/client paths
- * import this module too) `Date.now()` is ordinary wall time, which is correct
- * there since those paths are never replayed.
+ * Deterministic current time (epoch ms). Inside the workflow isolate the
+ * Temporal SDK shims `Date.now()` to a value that stays constant across a
+ * Workflow Task and its replays — the replay-safe clock run timestamps need.
  */
 function nowMs(): number {
   return Date.now();
@@ -124,11 +116,6 @@ function nowMs(): number {
  */
 function isReplaying(): boolean {
   return workflowInfo().unsafe.isReplayingHistoryEvents;
-}
-
-/** A fresh deterministic run id seeded off the workflow's PRNG. */
-function newRunId(): string {
-  return uuid4();
 }
 
 let cachedSinks: LangSmithSinks | undefined;
@@ -197,17 +184,32 @@ export function describeError(err: unknown): string | undefined {
   return String(err);
 }
 
+/** Coerce an arbitrary operation result into a LangSmith outputs object. */
+export function asOutputs(result: unknown): Record<string, unknown> {
+  if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
+    return result as Record<string, unknown>;
+  }
+  return { result };
+}
+
+/** The trace context to propagate for `run`, or `undefined` when absent. */
+export function runHeaders(run: RunTree | undefined): LangSmithTraceContext | undefined {
+  return run ? (run.toHeaders() as LangSmithTraceContext) : undefined;
+}
+
+/** Emit a short-lived marker run: post, end, patch. */
+export async function emitMarkerRun(marker: RunTree): Promise<void> {
+  await marker.postRun();
+  await marker.end({});
+  await marker.patchRun();
+}
+
 /**
  * A {@link RunTree} subclass safe to construct and drive from workflow code.
  *
- * Composition was considered (per the "wrap, don't subclass" guidance) but
- * rejected here for one concrete reason: LangSmith's native `traceable`
- * resolves its parent with `isRunTree(getCurrentRunTree())` and then calls
- * `parent.createChild(...)`. A plain wrapper fails the `instanceof RunTree`
- * check, so `traceable` would refuse to nest under it. We therefore subclass,
- * but inject all non-deterministic values **through the constructor config**
- * (never via retroactive `defineProperty`), and override only `createChild`
- * (to keep children replay-safe) and the three I/O methods.
+ * Subclasses rather than wraps because LangSmith's `traceable` resolves its
+ * parent with `instanceof RunTree` before calling `parent.createChild(...)`, so
+ * a plain wrapper would refuse to nest under it.
  */
 export class ReplaySafeRunTree extends RunTree {
   constructor(config: RunTreeConfig) {
@@ -215,7 +217,7 @@ export class ReplaySafeRunTree extends RunTree {
   }
 
   private static fill(config: RunTreeConfig): RunTreeConfig {
-    const id = config.id ?? newRunId();
+    const id = config.id ?? uuid4();
     const start_time = config.start_time ?? nowMs();
     const trace_id = config.trace_id ?? config.parent_run?.trace_id ?? id;
     let dotted_order = config.dotted_order;
@@ -239,7 +241,7 @@ export class ReplaySafeRunTree extends RunTree {
 
   /** Produce a replay-safe child so deeply-nested `traceable` runs stay deterministic. */
   override createChild(config: RunTreeConfig): ReplaySafeRunTree {
-    const id = config.id ?? newRunId();
+    const id = config.id ?? uuid4();
     const start_time = config.start_time ?? nowMs();
     const child = new ReplaySafeRunTree({
       ...config,
@@ -271,11 +273,7 @@ export class ReplaySafeRunTree extends RunTree {
     sinks().langsmith.updateRun(serializeRun(this));
   }
 
-  /**
-   * Record end-time / outputs / error on the run object (pure, replay-safe),
-   * then let `traceable` call {@link patchRun} to emit. We deliberately do not
-   * call `super.end()`'s implicit network path; field assignment only.
-   */
+  /** Record end-time / outputs / error on the run object (pure, replay-safe). */
   override async end(outputs?: Record<string, unknown>, error?: string, endTime?: number): Promise<void> {
     if (outputs !== undefined) {
       this.outputs = outputs;
@@ -285,14 +283,6 @@ export class ReplaySafeRunTree extends RunTree {
     }
     this.end_time = endTime ?? nowMs();
   }
-}
-
-/**
- * Build a replay-safe **root** run for a Temporal operation, optionally nested
- * under a reconstructed parent context.
- */
-export function newRun(config: RunTreeConfig): ReplaySafeRunTree {
-  return new ReplaySafeRunTree(config);
 }
 
 /**

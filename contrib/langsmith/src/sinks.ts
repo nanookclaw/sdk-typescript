@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { LangSmithTracingClientInterface } from 'langsmith';
+import type { Client, LangSmithTracingClientInterface } from 'langsmith';
 import type { Sinks } from '@temporalio/workflow';
 import type { InjectedSinks } from '@temporalio/worker';
 
@@ -28,35 +28,22 @@ import { isTracingEnabled } from './propagation';
  * `Client.updateRun` need.
  */
 export interface SerializedRun {
-  /** Deterministic run id (from Temporal `uuid4()` inside a workflow). */
   id: string;
-  /** Trace id — the root run id for this trace. */
   trace_id: string;
-  /** LangSmith dotted-order string encoding the run's position in the trace. */
   dotted_order: string;
-  /** Parent run id, when this run is nested. */
   parent_run_id?: string;
-  /** Display name, e.g. `RunActivity:my_activity`. */
   name: string;
-  /** LangSmith run type (`chain`, `tool`, `llm`, ...). */
   run_type: string;
-  /** Deterministic start time (epoch ms). */
   start_time: number;
   /** End time (epoch ms); present only on the update record. */
   end_time?: number;
-  /** Structured inputs. */
   inputs?: Record<string, unknown>;
-  /** Structured outputs (update record). */
   outputs?: Record<string, unknown>;
   /** Error string; non-null marks the run errored. */
   error?: string;
-  /** Extra payload (carries `metadata`). */
   extra?: Record<string, unknown>;
-  /** Run tags. */
   tags?: string[];
-  /** Target LangSmith project. */
   project_name?: string;
-  /** Streaming / lifecycle events (e.g. `new_token`). */
   events?: Record<string, unknown>[];
 }
 
@@ -128,12 +115,8 @@ function toUpdateParams(run: SerializedRun): Parameters<LangSmithTracingClientIn
  *
  * Emission errors are swallowed: an observability backend hiccup must never
  * fail the user's workflow. Both functions are `callDuringReplay: false`.
- *
- * Exposed publicly as an advanced escape hatch for users who construct their
- * Worker's `sinks` by hand instead of letting {@link LangSmithPlugin} inject
- * them; merge the returned object into your own `InjectedSinks`.
  */
-export function createLangSmithSinks(client: LangSmithTracingClientInterface): InjectedSinks<LangSmithSinks> {
+export function createLangSmithSinks(client: Client): InjectedSinks<LangSmithSinks> {
   return {
     langsmith: {
       createRun: {

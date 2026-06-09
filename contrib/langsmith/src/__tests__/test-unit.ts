@@ -16,7 +16,6 @@ import {
   decodeContextString,
   encodeContextString,
   isInternalQuery,
-  isSensitiveKey,
   isTracingEnabled,
   readContextHeader,
   scrubSensitive,
@@ -63,9 +62,7 @@ test('scrubSensitive returns undefined unchanged', (t) => {
 });
 
 test('scrubSensitive prefix-matches case-insensitively (authentication matches auth)', (t) => {
-  t.is(isSensitiveKey('Authentication'), true);
-  t.is(isSensitiveKey('API_KEY_ID'), true);
-  t.is(isSensitiveKey('username'), false);
+  t.deepEqual(scrubSensitive({ Authentication: 'x', API_KEY_ID: 'k', username: 'u' }), { username: 'u' });
 });
 
 test('isTracingEnabled defaults to disabled when no flags are set', (t) => {

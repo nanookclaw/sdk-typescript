@@ -31,6 +31,7 @@ import {
 } from './propagation';
 import {
   RUN_TYPE,
+  asOutputs,
   describeError,
   runActivityRunName,
   runCancelNexusHandlerRunName,
@@ -48,14 +49,6 @@ type ActivityNext = (input: ActivityExecuteInput) => Promise<unknown>;
 
 interface ActivityInboundInterceptor {
   execute?(input: ActivityExecuteInput, next: ActivityNext): Promise<unknown>;
-}
-
-/** Coerce an arbitrary activity/handler result into a LangSmith outputs object. */
-function asOutputs(result: unknown): Record<string, unknown> {
-  if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
-    return result as Record<string, unknown>;
-  }
-  return { result };
 }
 
 /**

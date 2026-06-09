@@ -16,9 +16,6 @@ It handles the parts that are otherwise hard:
   through `workflow → activity → child-workflow → Nexus` so the runs nest the
   way you expect, instead of fragmenting into disconnected roots.
 
-> Requires `@temporalio/*` **1.17.0 or later** — it relies on the plugin API,
-> Nexus interceptors, and the update validator.
-
 ## Install
 
 ```bash
@@ -217,21 +214,6 @@ const worker = await Worker.create({
 The plugin is safe to register on both the `Client` and the `Worker`; it
 de-duplicates its own interceptors and sinks, so a worker built from a
 plugin-configured client will not double-instrument.
-
-## Advanced: building sinks by hand
-
-If you construct your Worker's `sinks` manually instead of letting the plugin
-inject them, merge in the plugin's sinks:
-
-```typescript
-import { createLangSmithSinks } from '@temporalio/langsmith';
-import { Client as LangSmithClient } from 'langsmith';
-
-const sinks = {
-  ...yourOwnSinks,
-  ...createLangSmithSinks(new LangSmithClient()),
-};
-```
 
 ## License
 

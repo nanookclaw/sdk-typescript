@@ -68,6 +68,8 @@ const ASYNC_HOOKS_MODULE = 'async_hooks';
  * never cross a Temporal boundary — supply a pre-constructed {@link Client}
  * (which reads `LANGSMITH_API_KEY` from the worker/client process env) or let
  * the plugin construct a default client from the environment.
+ *
+ * @experimental Plugins is an experimental feature; APIs may change without notice.
  */
 export interface LangSmithPluginOptions {
   /**
@@ -104,6 +106,8 @@ export interface LangSmithPluginOptions {
  * const plugin = new LangSmithPlugin({ addTemporalRuns: true });
  * const worker = await Worker.create({ workflowsPath, taskQueue: 'tq', plugins: [plugin] });
  * ```
+ *
+ * @experimental Plugins is an experimental feature; APIs may change without notice.
  */
 export class LangSmithPlugin extends SimplePlugin {
   private readonly client: Client;
@@ -200,17 +204,9 @@ export class LangSmithPlugin extends SimplePlugin {
     if (!workflowInterceptorModules.includes(WORKFLOW_INTERCEPTOR_MODULE)) {
       workflowInterceptorModules.push(WORKFLOW_INTERCEPTOR_MODULE);
     }
-    // A user workflow body that imports `langsmith/traceable` transitively
-    // imports `node:async_hooks` (langsmith does `import { AsyncLocalStorage }
-    // from "node:async_hooks"` at module load). The SDK bundler's
-    // `captureProblematicModules` guard reads the *original* dependency request
-    // (`node:async_hooks`, independent of our webpack rewrite below), strips the
-    // `node:` prefix, and aborts the build because `async_hooks` is a disallowed
-    // builtin. Whitelisting `async_hooks` in `ignoreModules` is the SDK-sanctioned
-    // way to dismiss that guard (it is the exact remedy the error message names).
-    // This is safe *because* the rewrite below replaces the module with our
-    // deterministic, isolate-safe `AsyncLocalStorage` shim — the disallowed
-    // Node implementation never actually reaches the isolate.
+    // Dismiss the SDK bundler's disallowed-builtin guard for `async_hooks`; the
+    // webpack rewrite in `aliasAsyncHooks` is what actually keeps it out of the
+    // isolate (see that function for the full rationale).
     const ignoreModules = [...(base.ignoreModules ?? [])];
     if (!ignoreModules.includes(ASYNC_HOOKS_MODULE)) {
       ignoreModules.push(ASYNC_HOOKS_MODULE);
@@ -223,15 +219,6 @@ export class LangSmithPlugin extends SimplePlugin {
       // literal in the bundle, parsed back by the workflow module at runtime.
       const definitions = { [CONFIG_GLOBAL]: JSON.stringify(configJson) };
       const withDefine = injectDefinePlugin(merged, definitions);
-      // `node:async_hooks` does not exist in the V8 isolate, yet a user workflow
-      // body that imports `langsmith/traceable` drags it in (langsmith does
-      // `import { AsyncLocalStorage } from "node:async_hooks"` and runs
-      // `new AsyncLocalStorage()` at module load). Without this alias webpack
-      // fails the build with `UnhandledSchemeError`. Redirect the import to the
-      // workflow interceptor module's isolate-safe `AsyncLocalStorage` shim,
-      // which is backed by the same deterministic context manager the
-      // interceptors use — this is what lets a native `traceable` call inside a
-      // workflow body nest under the workflow run with no user code changes.
       return aliasLangSmithNodeUtils(aliasAsyncHooks(withDefine));
     };
     return { ...base, workflowInterceptorModules, ignoreModules, webpackConfigHook };

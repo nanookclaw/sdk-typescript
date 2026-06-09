@@ -31,10 +31,12 @@ import { getCurrentRunTree } from 'langsmith/traceable';
 import type { Client } from 'langsmith';
 import type { Payload } from '@temporalio/common';
 
-import { isTracingEnabled, scrubSensitive, withContextHeader, type LangSmithTraceContext } from './propagation';
+import { isTracingEnabled, scrubSensitive, withContextHeader } from './propagation';
 import {
   RUN_TYPE,
+  emitMarkerRun,
   queryWorkflowRunName,
+  runHeaders,
   signalWithStartRunName,
   signalWorkflowRunName,
   startUpdateWithStartRunName,
@@ -98,17 +100,6 @@ function buildRun(
   });
 }
 
-/** Post + close a marker run (a parent may close before its remote children). */
-async function emitMarker(run: RunTree): Promise<void> {
-  await run.postRun();
-  await run.end({});
-  await run.patchRun();
-}
-
-function headersOf(run: RunTree | undefined): LangSmithTraceContext | undefined {
-  return run ? (run.toHeaders() as LangSmithTraceContext) : undefined;
-}
-
 /**
  * Build the client-side LangSmith interceptor. Returned shape is structurally
  * the SDK's `WorkflowClientInterceptor`; methods the SDK does not recognize are
@@ -122,9 +113,9 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     }
     const ambient = getCurrentRunTree(true);
     if (config.addTemporalRuns) {
-      await emitMarker(buildRun(config, ambient, name, { args: input.args ?? [] }));
+      await emitMarkerRun(buildRun(config, ambient, name, { args: input.args ?? [] }));
     }
-    const headers = withContextHeader(input.headers, headersOf(ambient));
+    const headers = withContextHeader(input.headers, runHeaders(ambient));
     return next({ ...input, headers });
   };
 
@@ -137,10 +128,10 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     let propagate: RunTree | undefined = ambient;
     if (config.addTemporalRuns) {
       const marker = buildRun(config, ambient, name, { args: input.args ?? [] });
-      await emitMarker(marker);
+      await emitMarkerRun(marker);
       propagate = marker;
     }
-    const headers = withContextHeader(input.headers, headersOf(propagate));
+    const headers = withContextHeader(input.headers, runHeaders(propagate));
     return next({ ...input, headers });
   };
 

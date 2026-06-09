@@ -152,6 +152,19 @@ export async function ContinueAsNewWorkflow(iteration: number): Promise<number> 
 }
 
 /**
+ * Continues as new once, then runs a workflow-body `traceable` in the successor.
+ * With `addTemporalRuns: false` and no propagated parent, the successor's user
+ * run must stay a proper root rather than dangling under the predecessor's
+ * never-emitted synthetic root.
+ */
+export async function ContinueAsNewTraceableWorkflow(iteration: number): Promise<string> {
+  if (iteration === 0) {
+    await continueAsNew<typeof ContinueAsNewTraceableWorkflow>(iteration + 1);
+  }
+  return workflowInnerCall(`iter-${iteration}`);
+}
+
+/**
  * A workflow that fails directly (no activity) with a BENIGN-category failure.
  * Used to assert the *workflow-inbound* error path leaves the `RunWorkflow:` run
  * unmarked — distinct from the activity-inbound benign path covered by
