@@ -20,6 +20,7 @@ import {
   proxyActivities,
   setHandler,
   startChild,
+  uuid4,
   workflowInfo,
 } from '@temporalio/workflow';
 import { ApplicationFailureCategory } from '@temporalio/common';
@@ -162,6 +163,48 @@ export async function ContinueAsNewTraceableWorkflow(iteration: number): Promise
     await continueAsNew<typeof ContinueAsNewTraceableWorkflow>(iteration + 1);
   }
   return workflowInnerCall(`iter-${iteration}`);
+}
+
+export const readonlyQuery = defineQuery<string>('readonly_query');
+export const readonlyUpdate = defineUpdate<string, [string]>('readonly_update');
+export const releaseSignal = defineSignal('release');
+
+/** Returns immediately; child target of {@link ReadonlyDeterminismWorkflow}, fast to complete. */
+export async function ReadonlyDeterminismChildWorkflow(): Promise<void> {}
+
+/**
+ * Sets a query handler and an update handler with an always-rejecting validator,
+ * waits on a releasing signal, then draws `uuid4()` from the main PRNG and starts
+ * a trivial child whose `workflowId` embeds the FULL draw verbatim. Because a
+ * read-only handler always advances the main PRNG by at least one draw, this
+ * post-wait draw — and thus the `workflowId` on the `StartChildWorkflowExecution`
+ * command — differs between the live cached instance (where the handler ran) and a
+ * fresh replay (where it never did) unless run-id minting is isolated from the main
+ * PRNG. The id is carried verbatim in the command (no modulo, no truncation), so
+ * ANY change to the draw changes a replay-compared attribute with zero collision
+ * probability, and replay surfaces the divergence as a determinism violation. The
+ * child returns immediately, so the case stays fast (no real waits).
+ */
+export async function ReadonlyDeterminismWorkflow(): Promise<string> {
+  let released = false;
+  setHandler(readonlyQuery, () => 'query-result');
+  setHandler(readonlyUpdate, (value: string) => `updated:${value}`, {
+    validator: (_value: string) => {
+      throw new Error('always rejected');
+    },
+  });
+  setHandler(releaseSignal, () => {
+    released = true;
+  });
+
+  await condition(() => released);
+
+  const id = uuid4();
+  const child = await startChild(ReadonlyDeterminismChildWorkflow, {
+    workflowId: `rod-child-${id}`,
+  });
+  await child.result();
+  return id;
 }
 
 /**

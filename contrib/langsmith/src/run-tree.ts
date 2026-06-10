@@ -22,6 +22,7 @@ import type { Client } from 'langsmith';
 import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/common';
 import { proxySinks, uuid4, workflowInfo } from '@temporalio/workflow';
 
+import { uuid4FromRandom } from './prng';
 import { scrubSensitive, type LangSmithTraceContext } from './propagation';
 import type { EmitterConfig, LangSmithSinks, SerializedRun } from './sinks';
 
@@ -227,12 +228,19 @@ export function buildRunTree(config: EmitterConfig, params: RunTreeParams): RunT
  * @internal
  */
 export class ReplaySafeRunTree extends RunTree {
-  constructor(config: RunTreeConfig) {
-    super(ReplaySafeRunTree.fill(config));
+  // Per-invocation run-id source. Seeded by read-only handlers (queries, update
+  // validators) so their ids don't draw from the Workflow main PRNG; left
+  // undefined on recorded paths, where id minting falls back to the main-PRNG
+  // uuid4. Propagated to every child so the whole subtree draws from one source.
+  protected readonly random?: () => number;
+
+  constructor(config: RunTreeConfig, random?: () => number) {
+    super(ReplaySafeRunTree.fill(config, random));
+    this.random = random;
   }
 
-  private static fill(config: RunTreeConfig): RunTreeConfig {
-    const id = config.id ?? uuid4();
+  private static fill(config: RunTreeConfig, random?: () => number): RunTreeConfig {
+    const id = config.id ?? (random ? uuid4FromRandom(random) : uuid4());
     const start_time = config.start_time ?? Date.now();
     const trace_id = config.trace_id ?? config.parent_run?.trace_id ?? id;
     let dotted_order = config.dotted_order;
@@ -256,18 +264,17 @@ export class ReplaySafeRunTree extends RunTree {
 
   /** Produce a replay-safe child so deeply-nested `traceable` runs stay deterministic. */
   override createChild(config: RunTreeConfig): ReplaySafeRunTree {
-    const id = config.id ?? uuid4();
-    const start_time = config.start_time ?? Date.now();
-    const child = new ReplaySafeRunTree({
-      ...config,
-      id,
-      start_time,
-      run_type: config.run_type ?? RUN_TYPE.CHAIN,
-      parent_run: this,
-      parent_run_id: this.id,
-      trace_id: this.trace_id,
-      project_name: config.project_name ?? this.project_name,
-    });
+    const child = new ReplaySafeRunTree(
+      {
+        ...config,
+        run_type: config.run_type ?? RUN_TYPE.CHAIN,
+        parent_run: this,
+        parent_run_id: this.id,
+        trace_id: this.trace_id,
+        project_name: config.project_name ?? this.project_name,
+      },
+      this.random
+    );
     this.child_runs.push(child);
     return child;
   }
@@ -311,11 +318,14 @@ export class ReplaySafeRunTree extends RunTree {
 export class _RootReplaySafeRunTreeFactory extends ReplaySafeRunTree {
   /** Produce a replay-safe child with no link back to this factory. */
   override createChild(config: RunTreeConfig): ReplaySafeRunTree {
-    return new ReplaySafeRunTree({
-      ...config,
-      run_type: config.run_type ?? RUN_TYPE.CHAIN,
-      project_name: config.project_name ?? this.project_name,
-    });
+    return new ReplaySafeRunTree(
+      {
+        ...config,
+        run_type: config.run_type ?? RUN_TYPE.CHAIN,
+        project_name: config.project_name ?? this.project_name,
+      },
+      this.random
+    );
   }
 
   override async postRun(): Promise<void> {}
