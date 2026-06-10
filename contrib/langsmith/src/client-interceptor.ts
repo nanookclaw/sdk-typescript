@@ -9,12 +9,12 @@
 
 import { RunTree } from 'langsmith/run_trees';
 import { getCurrentRunTree } from 'langsmith/traceable';
-import type { Client } from 'langsmith';
 import type { Payload } from '@temporalio/common';
 
-import { isTracingEnabled, scrubSensitive, withContextHeader } from './propagation';
+import { isTracingEnabled, withContextHeader } from './propagation';
 import {
   RUN_TYPE,
+  buildRunTree,
   emitMarkerRun,
   queryWorkflowRunName,
   runHeaders,
@@ -57,31 +57,6 @@ function updateName(input: UpdateInput): string {
 }
 
 /**
- * Build a LangSmith run for a client-side Temporal-operation marker, parented
- * under the ambient run when present. The run is always wired to the
- * plugin-configured client so emission is captured by whatever client the user
- * passed (a real LangSmith client in production, a collector in tests).
- */
-function buildRun(
-  config: EmitterConfig,
-  ambient: RunTree | undefined,
-  name: string,
-  inputs: Record<string, unknown>
-): RunTree {
-  return new RunTree({
-    name,
-    run_type: RUN_TYPE.CHAIN,
-    inputs,
-    parent_run: ambient,
-    client: config.client as unknown as Client,
-    project_name: config.projectName ?? ambient?.project_name,
-    tags: config.defaultTags,
-    extra: { metadata: scrubSensitive(config.defaultMetadata) ?? {} },
-    tracingEnabled: true,
-  });
-}
-
-/**
  * Build the client-side LangSmith interceptor. Returned shape is structurally
  * the SDK's `WorkflowClientInterceptor`; methods the SDK does not recognize are
  * simply never invoked.
@@ -93,7 +68,9 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     }
     const ambient = getCurrentRunTree(true);
     if (config.addTemporalRuns) {
-      await emitMarkerRun(buildRun(config, ambient, name, { args: input.args ?? [] }));
+      await emitMarkerRun(
+        buildRunTree(config, { name, runType: RUN_TYPE.CHAIN, parent: ambient, inputs: { args: input.args ?? [] } })
+      );
     }
     const headers = withContextHeader(input.headers, runHeaders(ambient));
     return next({ ...input, headers });
@@ -106,7 +83,12 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     const ambient = getCurrentRunTree(true);
     let propagate: RunTree | undefined = ambient;
     if (config.addTemporalRuns) {
-      const marker = buildRun(config, ambient, name, { args: input.args ?? [] });
+      const marker = buildRunTree(config, {
+        name,
+        runType: RUN_TYPE.CHAIN,
+        parent: ambient,
+        inputs: { args: input.args ?? [] },
+      });
       await emitMarkerRun(marker);
       propagate = marker;
     }

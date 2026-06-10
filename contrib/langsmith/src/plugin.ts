@@ -204,16 +204,8 @@ export class LangSmithPlugin extends SimplePlugin {
 
   /** Best-effort flush of any batched traces. */
   private async flush(): Promise<void> {
-    const client = this.client as unknown as {
-      awaitPendingTraceBatches?: () => Promise<void>;
-      flush?: () => Promise<void>;
-    };
     try {
-      if (typeof client.awaitPendingTraceBatches === 'function') {
-        await client.awaitPendingTraceBatches();
-      } else if (typeof client.flush === 'function') {
-        await client.flush();
-      }
+      await this.client.awaitPendingTraceBatches();
     } catch {
       /* swallow: telemetry flush must never fail worker shutdown */
     }

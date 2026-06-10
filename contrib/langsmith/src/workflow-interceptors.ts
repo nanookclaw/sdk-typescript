@@ -5,7 +5,11 @@
  * unavailable so a synchronous stack-based context provider stands in for
  * LangSmith's async-context store.
  *
+ * Internal: the worker loads this module by specifier and the bundler aliases
+ * `node:async_hooks` to it — it is not a hand-import API.
+ *
  * @module
+ * @internal
  */
 
 import { RunTree } from 'langsmith/run_trees';
@@ -44,6 +48,7 @@ import {
   handleSignalRunName,
   handleUpdateRunName,
   runHeaders,
+  runTreeFromContext,
   runWorkflowRunName,
   signalChildWorkflowRunName,
   signalExternalWorkflowRunName,
@@ -57,6 +62,8 @@ import {
  * Configuration the worker injects into the workflow bundle via the bundler's
  * `DefinePlugin`. Mirrors the user-facing plugin options that the workflow
  * isolate needs in order to decide whether to emit Temporal-operation runs.
+ *
+ * @internal
  */
 export interface WorkflowLangSmithConfig {
   addTemporalRuns: boolean;
@@ -151,6 +158,8 @@ ensureProviderInstalled(sharedManager);
  * aliases `node:async_hooks` (absent in the isolate) to this module so
  * LangSmith's `import { AsyncLocalStorage } from "node:async_hooks"` resolves
  * here. Every instance delegates to {@link sharedManager}.
+ *
+ * @internal
  */
 export class AsyncLocalStorage<T = unknown> {
   getStore(): T | undefined {
@@ -177,15 +186,7 @@ export class AsyncLocalStorage<T = unknown> {
 
 /** Reconstruct the propagated parent run from a Payload-keyed header map. */
 function reconstructParent(headers: Record<string, unknown> | undefined): RunTree | undefined {
-  const ctx = readContextHeader(headers as Record<string, never> | undefined);
-  if (!ctx) {
-    return undefined;
-  }
-  try {
-    return RunTree.fromHeaders(ctx as unknown as Record<string, string>) ?? undefined;
-  } catch {
-    return undefined;
-  }
+  return runTreeFromContext(readContextHeader(headers as Record<string, never> | undefined));
 }
 
 /**
@@ -226,6 +227,21 @@ async function emitMarker(
   const marker = parent.createChild({ name, run_type: RUN_TYPE.CHAIN, inputs });
   await emitMarkerRun(marker);
   return marker;
+}
+
+function buildReplaySafeRunTree(
+  config: WorkflowLangSmithConfig,
+  params: { name: string; runType: string; anchor: ReplaySafeRunTree | undefined; inputs: Record<string, unknown> }
+): ReplaySafeRunTree {
+  return new ReplaySafeRunTree({
+    name: params.name,
+    run_type: params.runType,
+    parent_run: params.anchor,
+    project_name: config.projectName,
+    tags: config.defaultTags,
+    extra: { metadata: config.defaultMetadata },
+    inputs: params.inputs,
+  });
 }
 
 class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
@@ -300,13 +316,10 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
     }
     const parent = reconstructParent(input.headers);
     const anchor = asReplaySafeAnchor(parent);
-    const run = new ReplaySafeRunTree({
+    const run = buildReplaySafeRunTree(this.config, {
       name: validateUpdateRunName(input.name),
-      run_type: RUN_TYPE.CHAIN,
-      parent_run: anchor,
-      project_name: this.config.projectName,
-      tags: this.config.defaultTags,
-      extra: { metadata: this.config.defaultMetadata },
+      runType: RUN_TYPE.CHAIN,
+      anchor,
       inputs: { args: input.args },
     });
     // Validators are synchronous and must not be made async; emit start/end
@@ -351,15 +364,7 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
       return scoped ? this.ctx.run(ambient, next) : this.ctx.withAmbient(ambient, next);
     }
     const anchor = asReplaySafeAnchor(parent);
-    const run = new ReplaySafeRunTree({
-      name,
-      run_type: runType,
-      parent_run: anchor,
-      project_name: this.config.projectName,
-      tags: this.config.defaultTags,
-      extra: { metadata: this.config.defaultMetadata },
-      inputs,
-    });
+    const run = buildReplaySafeRunTree(this.config, { name, runType, anchor, inputs });
     await run.postRun();
     const body = async (): Promise<unknown> => {
       try {
@@ -479,6 +484,8 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
 /**
  * Workflow interceptors factory. Loaded by the Temporal worker for every
  * workflow in the bundle (registered via the plugin's `workflowModules`).
+ *
+ * @internal
  */
 export function interceptors(): WorkflowInterceptors {
   const config = readConfig();

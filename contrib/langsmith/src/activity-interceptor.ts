@@ -8,7 +8,6 @@
 
 import { RunTree } from 'langsmith/run_trees';
 import { withRunTree } from 'langsmith/traceable';
-import type { Client } from 'langsmith';
 import type { Payload } from '@temporalio/common';
 import type { Context as ActivityContext } from '@temporalio/activity';
 
@@ -17,16 +16,17 @@ import {
   decodeContextString,
   isTracingEnabled,
   readContextHeader,
-  scrubSensitive,
   type LangSmithTraceContext,
 } from './propagation';
 import {
   RUN_TYPE,
   asOutputs,
   describeError,
+  buildRunTree,
   runActivityRunName,
   runCancelNexusHandlerRunName,
   runStartNexusHandlerRunName,
+  runTreeFromContext,
 } from './run-tree';
 import type { EmitterConfig } from './sinks';
 
@@ -49,15 +49,7 @@ interface ActivityInboundInterceptor {
  * for the operation run (or directly as ambient when `addTemporalRuns` is off).
  */
 function anchor(config: EmitterConfig, ctx: LangSmithTraceContext | undefined): RunTree | undefined {
-  if (!ctx) {
-    return undefined;
-  }
-  let parsed: RunTree | undefined;
-  try {
-    parsed = RunTree.fromHeaders(ctx as unknown as Record<string, string>) ?? undefined;
-  } catch {
-    parsed = undefined;
-  }
+  const parsed = runTreeFromContext(ctx);
   if (!parsed) {
     return undefined;
   }
@@ -69,7 +61,7 @@ function anchor(config: EmitterConfig, ctx: LangSmithTraceContext | undefined): 
     dotted_order: parsed.dotted_order,
     parent_run_id: parsed.parent_run_id,
     project_name: config.projectName ?? parsed.project_name,
-    client: config.client as unknown as Client,
+    client: config.client,
     // Force-enable so nested body `traceable` runs emit; kill switch is `isTracingEnabled()`.
     tracingEnabled: true,
   });
@@ -113,16 +105,11 @@ export function createActivityInboundInterceptor(
         return parent ? withRunTree(parent, () => next(input)) : next(input);
       }
       const activityType = ctx.info.activityType;
-      const run = new RunTree({
+      const run = buildRunTree(config, {
         name: runActivityRunName(activityType),
-        run_type: RUN_TYPE.TOOL,
+        runType: RUN_TYPE.TOOL,
+        parent,
         inputs: { args: input.args },
-        parent_run: parent,
-        client: config.client as unknown as Client,
-        project_name: config.projectName ?? parent?.project_name,
-        tags: config.defaultTags,
-        extra: { metadata: scrubSensitive(config.defaultMetadata) ?? {} },
-        tracingEnabled: true,
       });
       return traceOperation(run, () => next(input));
     },
@@ -169,15 +156,10 @@ export function createNexusInboundInterceptor(config: EmitterConfig): NexusInbou
       if (!config.addTemporalRuns) {
         return parent ? withRunTree(parent, () => next(input)) : next(input);
       }
-      const run = new RunTree({
+      const run = buildRunTree(config, {
         name: nameOf(input.ctx.service, input.ctx.operation),
-        run_type: RUN_TYPE.CHAIN,
-        parent_run: parent,
-        client: config.client as unknown as Client,
-        project_name: config.projectName ?? parent?.project_name,
-        tags: config.defaultTags,
-        extra: { metadata: scrubSensitive(config.defaultMetadata) ?? {} },
-        tracingEnabled: true,
+        runType: RUN_TYPE.CHAIN,
+        parent,
       });
       return traceOperation(run, () => next(input));
     };

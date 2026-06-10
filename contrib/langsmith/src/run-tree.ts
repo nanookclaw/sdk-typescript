@@ -10,7 +10,11 @@
  *  2. **Network I/O on replay.** `postRun` / `patchRun` would re-POST runs on
  *     every history replay.
  *
+ * Internal: every export here is consumed only by sibling modules in this
+ * package; none is reachable through a package entry point.
+ *
  * @module
+ * @internal
  */
 
 import { RunTree, convertToDottedOrderFormat, type RunTreeConfig } from 'langsmith/run_trees';
@@ -19,7 +23,7 @@ import { ApplicationFailure, ApplicationFailureCategory } from '@temporalio/comm
 import { proxySinks, uuid4, workflowInfo } from '@temporalio/workflow';
 
 import { scrubSensitive, type LangSmithTraceContext } from './propagation';
-import type { LangSmithSinks, SerializedRun } from './sinks';
+import type { EmitterConfig, LangSmithSinks, SerializedRun } from './sinks';
 
 /** LangSmith run-type constants used for Temporal-operation runs. */
 export const RUN_TYPE = {
@@ -176,12 +180,51 @@ export async function emitMarkerRun(marker: RunTree): Promise<void> {
   await marker.patchRun();
 }
 
+/** Reconstruct a propagated parent {@link RunTree} from a trace context; never throws. */
+export function runTreeFromContext(ctx: LangSmithTraceContext | undefined): RunTree | undefined {
+  if (!ctx) {
+    return undefined;
+  }
+  try {
+    return RunTree.fromHeaders(ctx as unknown as Record<string, string>) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface RunTreeParams {
+  name: string;
+  runType: string;
+  parent: RunTree | undefined;
+  inputs?: Record<string, unknown>;
+}
+
+/**
+ * Build an emitter-side {@link RunTree} (client / activity / Nexus); force-enables
+ * tracing so nested body `traceable` runs emit — kill switch is `isTracingEnabled()`.
+ */
+export function buildRunTree(config: EmitterConfig, params: RunTreeParams): RunTree {
+  return new RunTree({
+    name: params.name,
+    run_type: params.runType,
+    inputs: params.inputs ?? {},
+    parent_run: params.parent,
+    client: config.client,
+    project_name: config.projectName ?? params.parent?.project_name,
+    tags: config.defaultTags,
+    extra: { metadata: scrubSensitive(config.defaultMetadata) ?? {} },
+    tracingEnabled: true,
+  });
+}
+
 /**
  * A {@link RunTree} subclass safe to construct and drive from workflow code.
  *
  * Subclasses rather than wraps because LangSmith's `traceable` resolves its
  * parent with `instanceof RunTree` before calling `parent.createChild(...)`, so
  * a plain wrapper would refuse to nest under it.
+ *
+ * @internal
  */
 export class ReplaySafeRunTree extends RunTree {
   constructor(config: RunTreeConfig) {
@@ -262,6 +305,8 @@ export class ReplaySafeRunTree extends RunTree {
  * independent root children. Installed as the ambient so a workflow-body
  * `traceable` takes LangSmith's `createChild` branch (deterministic id) instead
  * of the no-parent branch that mints a uuid via `crypto`, which the isolate lacks.
+ *
+ * @internal
  */
 export class _RootReplaySafeRunTreeFactory extends ReplaySafeRunTree {
   /** Produce a replay-safe child with no link back to this factory. */

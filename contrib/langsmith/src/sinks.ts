@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { Client, LangSmithTracingClientInterface } from 'langsmith';
+import type { Client } from 'langsmith';
 import type { Sinks } from '@temporalio/workflow';
 import type { InjectedSinks } from '@temporalio/worker';
 
@@ -34,7 +34,7 @@ export interface SerializedRun {
 /** Runtime configuration shared by the client and activity interceptors. */
 export interface EmitterConfig {
   /** The LangSmith client runs are emitted to. */
-  client: LangSmithTracingClientInterface;
+  client: Client;
   /** When false, no Temporal-operation runs are emitted (propagation only). */
   addTemporalRuns: boolean;
   /** Target LangSmith project. */
@@ -55,7 +55,8 @@ export interface LangSmithSinks extends Sinks {
   };
 }
 
-function toCreateParams(run: SerializedRun): Parameters<LangSmithTracingClientInterface['createRun']>[0] {
+// langsmith's CreateRunParams omits tags, but createRun spreads them into the request at runtime.
+function toCreateParams(run: SerializedRun): Parameters<Client['createRun']>[0] & { tags?: string[] } {
   return {
     id: run.id,
     trace_id: run.trace_id,
@@ -68,10 +69,10 @@ function toCreateParams(run: SerializedRun): Parameters<LangSmithTracingClientIn
     extra: run.extra,
     tags: run.tags,
     project_name: run.project_name,
-  } as Parameters<LangSmithTracingClientInterface['createRun']>[0];
+  };
 }
 
-function toUpdateParams(run: SerializedRun): Parameters<LangSmithTracingClientInterface['updateRun']>[1] {
+function toUpdateParams(run: SerializedRun): Parameters<Client['updateRun']>[1] {
   return {
     end_time: run.end_time,
     outputs: run.outputs,
@@ -82,7 +83,7 @@ function toUpdateParams(run: SerializedRun): Parameters<LangSmithTracingClientIn
     dotted_order: run.dotted_order,
     trace_id: run.trace_id,
     parent_run_id: run.parent_run_id,
-  } as Parameters<LangSmithTracingClientInterface['updateRun']>[1];
+  };
 }
 
 /** Build the worker-side {@link InjectedSinks} routing serialized runs to a real LangSmith client. */
