@@ -1,16 +1,7 @@
 /**
- * Activity-side and Nexus-handler-side LangSmith interceptors.
- *
- * Both run in the real Node worker process (activities and Nexus handlers are
- * never replayed deterministically), so they use the real LangSmith `Client`
- * and LangSmith's real async-context store via `withRunTree`. Installing the
- * run with `withRunTree` is what lets a user's *unchanged* `traceable` calls in
- * an activity / handler body nest under the Temporal-operation run with zero
- * code edits.
- *
- * Activity inbound reconstructs the propagated parent from the Payload-encoded
- * Temporal header; Nexus handlers reconstruct it from the plain-string Nexus
- * header (Nexus headers are not Payload-encoded).
+ * Activity-side and Nexus-handler-side LangSmith interceptors. Both run in the
+ * real Node worker process and install the reconstructed run via `withRunTree`
+ * so a user's unchanged body `traceable` calls nest under it.
  *
  * @module
  */
@@ -79,10 +70,7 @@ function anchor(config: EmitterConfig, ctx: LangSmithTraceContext | undefined): 
     parent_run_id: parsed.parent_run_id,
     project_name: config.projectName ?? parsed.project_name,
     client: config.client as unknown as Client,
-    // The user opted into tracing by installing the plugin, so body `traceable`
-    // runs nested under this propagated parent must emit even if the worker's
-    // process env hasn't independently enabled LangSmith. (Plugin-level kill
-    // switch is enforced separately via `isTracingEnabled()`.)
+    // Force-enable so nested body `traceable` runs emit; kill switch is `isTracingEnabled()`.
     tracingEnabled: true,
   });
 }
@@ -140,16 +128,6 @@ export function createActivityInboundInterceptor(
     },
   });
 }
-
-// ---------------------------------------------------------------------------
-// Nexus handler interceptor.
-//
-// Nexus headers cross the wire as a plain `Record<string, string>` (no Payload
-// encoding), so the trace context is decoded from its JSON-string form. The
-// exact Nexus inbound interceptor surface is newer and less stable than the
-// activity surface, so this is typed against local structural views and wired
-// defensively by the plugin.
-// ---------------------------------------------------------------------------
 
 /**
  * The Nexus operation context the SDK passes to a handler interceptor. Both

@@ -43,18 +43,9 @@ export interface LangSmithTraceContext {
   baggage: string;
 }
 
-/**
- * Case-insensitive prefix patterns for header / metadata keys that must never
- * be propagated into LangSmith runs or across the wire. Prefix-matched so that
- * e.g. `authentication` matches `auth`.
- *
- * This is a load-bearing security invariant, not decoration: outbound
- * interceptors and run builders run user-supplied metadata through
- * {@link scrubSensitive} before emitting it.
- */
+/** Case-insensitive key prefixes scrubbed from runs and propagated headers. */
 const SENSITIVE_KEY_PREFIXES: readonly string[] = [
   'auth',
-  'authorization',
   'api_key',
   'api-key',
   'x-api-key',
@@ -73,13 +64,7 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PREFIXES.some((prefix) => lower.startsWith(prefix));
 }
 
-/**
- * Return a shallow copy of `record` with all credential-bearing keys removed.
- *
- * Applied to every metadata / extra map the plugin attaches to a LangSmith run
- * so that secrets a user happens to carry in workflow/activity metadata never
- * reach the observability backend.
- */
+/** Return a shallow copy of `record` with all credential-bearing keys removed. */
 export function scrubSensitive<T = unknown>(record: Record<string, T> | undefined): Record<string, T> | undefined {
   if (record == null) {
     return record;
@@ -93,20 +78,12 @@ export function scrubSensitive<T = unknown>(record: Record<string, T> | undefine
   return out;
 }
 
-/**
- * Encode a LangSmith trace context into a Temporal `Payload` for the
- * binary/Temporal header transport (client, workflow, activity, child
- * workflow, continue-as-new).
- */
+/** Encode a trace context into a Temporal `Payload` for the binary header transport. */
 export function encodeContextPayload(context: LangSmithTraceContext): Payload {
   return defaultPayloadConverter.toPayload(context);
 }
 
-/**
- * Decode a LangSmith trace context from a Temporal `Payload`, or return
- * `undefined` if the header is absent or unparseable. Decoding never throws —
- * a malformed header must not fail the user's workflow/activity.
- */
+/** Decode a trace context from a Temporal `Payload`; never throws (malformed → undefined). */
 export function decodeContextPayload(payload: Payload | undefined): LangSmithTraceContext | undefined {
   if (payload == null) {
     return undefined;

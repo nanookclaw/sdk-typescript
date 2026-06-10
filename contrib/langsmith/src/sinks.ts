@@ -1,17 +1,6 @@
 /**
  * Worker-side LangSmith emission, exposed as a Temporal {@link InjectedSinks}.
  *
- * Workflow code runs in a deterministic V8 isolate that cannot perform network
- * I/O. Sinks are the canonical bridge: the workflow-side interceptors build a
- * {@link SerializedRun} and call a sink function, and the worker process (real
- * Node, holding the real LangSmith `Client`) performs the `createRun` /
- * `updateRun` HTTP call out of the isolate.
- *
- * Replay safety: both sink functions are registered with
- * `callDuringReplay: false`, so history replay never re-emits a run. Combined
- * with deterministic run IDs (see `run-tree.ts`) this gives the
- * try-for-exactly-once delivery the plugin promises.
- *
  * @module
  */
 
@@ -21,12 +10,7 @@ import type { InjectedSinks } from '@temporalio/worker';
 
 import { isTracingEnabled } from './propagation';
 
-/**
- * Plain-JSON description of a LangSmith run as it crosses the isolate→worker
- * boundary. Every field is structurally serializable so it survives the sink
- * transport. This is the union of what `Client.createRun` and
- * `Client.updateRun` need.
- */
+/** Plain-JSON description of a LangSmith run crossing the isolate→worker boundary. */
 export interface SerializedRun {
   id: string;
   trace_id: string;
@@ -47,11 +31,7 @@ export interface SerializedRun {
   events?: Record<string, unknown>[];
 }
 
-/**
- * Runtime configuration shared by the client and activity interceptors, which
- * emit LangSmith runs directly (real Node context, real client) rather than
- * through the workflow Sink.
- */
+/** Runtime configuration shared by the client and activity interceptors. */
 export interface EmitterConfig {
   /** The LangSmith client runs are emitted to. */
   client: LangSmithTracingClientInterface;
@@ -65,11 +45,7 @@ export interface EmitterConfig {
   defaultMetadata?: Record<string, unknown>;
 }
 
-/**
- * The Temporal sink surface this plugin injects. Workflow code calls these via
- * `proxySinks<LangSmithSinks>()`; the worker fulfils them via
- * {@link createLangSmithSinks}.
- */
+/** The Temporal sink surface this plugin injects. */
 export interface LangSmithSinks extends Sinks {
   langsmith: {
     /** Emit a `createRun` for a newly started run. */
@@ -109,13 +85,7 @@ function toUpdateParams(run: SerializedRun): Parameters<LangSmithTracingClientIn
   } as Parameters<LangSmithTracingClientInterface['updateRun']>[1];
 }
 
-/**
- * Build the worker-side {@link InjectedSinks} that route serialized runs to a
- * real LangSmith client.
- *
- * Emission errors are swallowed: an observability backend hiccup must never
- * fail the user's workflow. Both functions are `callDuringReplay: false`.
- */
+/** Build the worker-side {@link InjectedSinks} routing serialized runs to a real LangSmith client. */
 export function createLangSmithSinks(client: Client): InjectedSinks<LangSmithSinks> {
   return {
     langsmith: {

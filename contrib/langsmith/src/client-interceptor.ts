@@ -1,27 +1,8 @@
 /**
- * Client-side LangSmith interceptor.
- *
- * Runs in the real Node process (not the workflow isolate), so it uses the real
- * LangSmith `Client` directly and reads the ambient run from LangSmith's real
- * async-context store (`getCurrentRunTree`). This is the entry point for trace
- * context that originates *outside* Temporal — a user who calls
- * `client.workflow.start(...)` (or `signal` / `query` / `startUpdate`) from
- * inside their own `traceable` gets that trace propagated into the workflow.
- *
- * Two propagation shapes, matching the workflow-side interceptors:
- *
- *  - **Execution** ops (`start`): emit a `StartWorkflow:` marker as a *peer*
- *    child of the ambient run and propagate the **ambient** context, so the
- *    remote `RunWorkflow:` becomes a sibling of the marker (both children of
- *    the ambient). With no ambient, the marker is a root and nothing is
- *    propagated, so `RunWorkflow:` is a separate root.
- *  - **Messaging** ops (`signal`, `signalWithStart`, `query`, `startUpdate`,
- *    `startUpdateWithStart`): emit the marker and propagate the **marker**
- *    context, so the remote `Handle*:` / `Validate*:` runs nest *under* the
- *    marker.
- *
- * Lifecycle ops (`terminate`, `cancel`, `describe`) pass through untouched:
- * they neither emit a run nor inject a header.
+ * Client-side LangSmith interceptor. Execution ops (`start`) emit a peer marker
+ * and propagate the **ambient** context (the remote run is a sibling); messaging
+ * ops (`signal`, `query`, `update`, …) emit the marker and propagate the
+ * **marker** context (the remote handler nests under it).
  *
  * @module
  */
@@ -106,7 +87,6 @@ function buildRun(
  * simply never invoked.
  */
 export function createClientInterceptor(config: EmitterConfig): Record<string, unknown> {
-  /** Execution op: marker is a peer of the remote run; propagate the ambient. */
   const peerStart = async <O>(input: StartInput, next: NextFn<StartInput, O>, name: string): Promise<O> => {
     if (!isTracingEnabled()) {
       return next(input);
@@ -119,7 +99,6 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     return next({ ...input, headers });
   };
 
-  /** Messaging op: remote handler nests under the marker; propagate the marker. */
   const parentMessage = async <I extends WithHeaders, O>(input: I, next: NextFn<I, O>, name: string): Promise<O> => {
     if (!isTracingEnabled()) {
       return next(input);
@@ -139,9 +118,7 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     start(input: StartInput, next: NextFn<StartInput, string>): Promise<string> {
       return peerStart(input, next, startWorkflowRunName(input.workflowType));
     },
-    // `startWithDetails` is the descriptor-returning variant of `start`; it
-    // propagates identically (peer marker + ambient context). Typed loosely on
-    // its output because the descriptor shape varies across SDK versions.
+    // Output typed loosely because the descriptor shape varies across SDK versions.
     startWithDetails<O>(input: StartInput, next: NextFn<StartInput, O>): Promise<O> {
       return peerStart(input, next, startWorkflowRunName(input.workflowType));
     },
@@ -160,7 +137,6 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     startUpdateWithStart(input: UpdateInput, next: NextFn<UpdateInput, unknown>): Promise<unknown> {
       return parentMessage(input, next, startUpdateWithStartRunName(updateName(input)));
     },
-    // Lifecycle operations carry no trace context and emit no run.
     terminate<I, O>(input: I, next: NextFn<I, O>): Promise<O> {
       return next(input);
     },

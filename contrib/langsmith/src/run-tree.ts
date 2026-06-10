@@ -2,25 +2,13 @@
  * Replay-safe LangSmith run construction for workflow code, plus the pure
  * run-name builders shared by every interceptor.
  *
- * Inside the Temporal workflow isolate two things make LangSmith's default
- * `RunTree` unsafe to use directly:
+ * Inside the workflow isolate LangSmith's default `RunTree` is unsafe on two
+ * counts that {@link ReplaySafeRunTree} fixes:
  *
- *  1. **Non-deterministic ids.** `RunTree` defaults its id to a random-tailed
- *     uuid7. On replay the random tail differs, so every replay would mint a
- *     fresh run id and flood the backend with duplicates.
- *  2. **Network I/O on replay.** `postRun` / `patchRun` would re-POST runs to
- *     LangSmith on every history replay.
- *
- * {@link ReplaySafeRunTree} fixes both: ids come from Temporal's deterministic
- * `uuid4()`, timestamps from the isolate's deterministic clock, and the I/O
- * methods route through a Temporal Sink (so the actual HTTP call happens in the
- * worker process) and are suppressed entirely while replaying.
- *
- * This module is import-safe in the worker process too — the run-name builders
- * and {@link serializeRun} are pure, and the workflow-only helpers
- * (`workflowInfo`, `uuid4`, `proxySinks`) are only touched from
- * {@link ReplaySafeRunTree} methods, which are only ever constructed inside a
- * workflow.
+ *  1. **Non-deterministic ids.** Its default random-tailed uuid7 would mint a
+ *     fresh id on every replay, flooding the backend with duplicates.
+ *  2. **Network I/O on replay.** `postRun` / `patchRun` would re-POST runs on
+ *     every history replay.
  *
  * @module
  */
@@ -92,27 +80,11 @@ export const startUpdateWithStartRunName = (updateName: string): string => `Star
 // ---------------------------------------------------------------------------
 
 /**
- * Deterministic current time (epoch ms). Inside the workflow isolate the
- * Temporal SDK shims `Date.now()` to a value that stays constant across a
- * Workflow Task and its replays — the replay-safe clock run timestamps need.
- */
-function nowMs(): number {
-  return Date.now();
-}
-
-/**
- * True only while the workflow task is replaying genuine **history events** —
- * the exact condition under which emission must be suppressed to avoid
- * duplicate runs.
- *
- * Deliberately reads `isReplayingHistoryEvents`, NOT `isReplaying`. The two
- * differ for live read-only operations (query handlers and update validators):
- * there `isReplaying` is `true` (state is being rebuilt) but
- * `isReplayingHistoryEvents` is `false`, because the handler itself is a live
- * call that should produce a run. The Temporal SDK gates `callDuringReplay:
- * false` sinks on `isReplayingHistoryEvents`, so matching it here keeps our
- * in-isolate suppression consistent with sink dispatch — a live `HandleQuery:`
- * run is emitted, while runs are still suppressed during true history replay.
+ * True only while replaying genuine history events, when emission must be
+ * suppressed. Deliberately `isReplayingHistoryEvents`, NOT `isReplaying`: for
+ * live read-only handlers (queries, update validators) `isReplaying` is `true`
+ * but `isReplayingHistoryEvents` is `false`, so their runs still emit. Matches
+ * how the SDK gates `callDuringReplay: false` sinks.
  */
 function isReplaying(): boolean {
   return workflowInfo().unsafe.isReplayingHistoryEvents;
@@ -218,7 +190,7 @@ export class ReplaySafeRunTree extends RunTree {
 
   private static fill(config: RunTreeConfig): RunTreeConfig {
     const id = config.id ?? uuid4();
-    const start_time = config.start_time ?? nowMs();
+    const start_time = config.start_time ?? Date.now();
     const trace_id = config.trace_id ?? config.parent_run?.trace_id ?? id;
     let dotted_order = config.dotted_order;
     if (dotted_order == null) {
@@ -242,7 +214,7 @@ export class ReplaySafeRunTree extends RunTree {
   /** Produce a replay-safe child so deeply-nested `traceable` runs stay deterministic. */
   override createChild(config: RunTreeConfig): ReplaySafeRunTree {
     const id = config.id ?? uuid4();
-    const start_time = config.start_time ?? nowMs();
+    const start_time = config.start_time ?? Date.now();
     const child = new ReplaySafeRunTree({
       ...config,
       id,
@@ -281,21 +253,15 @@ export class ReplaySafeRunTree extends RunTree {
     if (error !== undefined) {
       this.error = error;
     }
-    this.end_time = endTime ?? nowMs();
+    this.end_time = endTime ?? Date.now();
   }
 }
 
 /**
- * A purely-internal anchor installed as the ambient run when `addTemporalRuns`
- * is off and no parent was propagated. It exists only so a workflow-body
- * `traceable` finds a `RunTree` in the context and takes LangSmith's
- * `createChild` branch (deterministic id) rather than the no-parent branch that
- * mints a uuid via `crypto` — which the workflow isolate lacks.
- *
- * Its {@link createChild} deliberately produces an **independent root** child
- * (no `parent_run_id`, no `parent_run`), so the user's run appears as a real
- * root in LangSmith rather than dangling under a phantom that is never emitted.
- * The anchor itself must never be emitted, so the I/O methods are no-ops.
+ * A synthetic, never-emitted anchor whose {@link createChild} produces
+ * independent root children. Installed as the ambient so a workflow-body
+ * `traceable` takes LangSmith's `createChild` branch (deterministic id) instead
+ * of the no-parent branch that mints a uuid via `crypto`, which the isolate lacks.
  */
 export class _RootReplaySafeRunTreeFactory extends ReplaySafeRunTree {
   /** Produce a replay-safe child with no link back to this factory. */

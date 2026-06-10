@@ -30,12 +30,7 @@ import { createLangSmithSinks } from './sinks';
 import type { EmitterConfig } from './sinks';
 import type { WorkflowLangSmithConfig } from './workflow-interceptors';
 
-/**
- * The webpack `Configuration` type as the SDK's bundler hook sees it. Derived
- * from {@link BundleOptions} rather than imported directly: `@temporalio/worker`
- * re-exports `WebpackConfiguration` from its options module but not from the
- * package root, so deriving it keeps us off a non-public import path.
- */
+// Derived: @temporalio/worker doesn't export WebpackConfiguration from its root.
 type WebpackConfiguration = Parameters<NonNullable<BundleOptions['webpackConfigHook']>>[0];
 
 /**
@@ -45,20 +40,10 @@ type WebpackConfiguration = Parameters<NonNullable<BundleOptions['webpackConfigH
  */
 const WORKFLOW_INTERCEPTOR_MODULE = '@temporalio/langsmith/workflow-interceptors';
 
-/**
- * Name under which the bundler injects the plugin config as a bare global into
- * the workflow bundle. Declared as a bare identifier (not a dotted property) so
- * webpack's `DefinePlugin` performs a clean textual substitution — the dotted
- * form is a well-known footgun that silently fails to replace.
- */
+// Bare identifier (not dotted) so DefinePlugin substitutes textually.
 const CONFIG_GLOBAL = '__TEMPORAL_LANGSMITH_CONFIG__';
 
-/**
- * The bare builtin name (no `node:` prefix) added to `BundleOptions.ignoreModules`
- * so the SDK bundler's disallowed-module guard does not abort the build. The
- * guard slices the `node:` prefix before matching, so the bare name is what it
- * compares against. See {@link LangSmithPlugin.configureBundler}.
- */
+// Bare builtin name added to `ignoreModules`; see {@link aliasAsyncHooks}.
 const ASYNC_HOOKS_MODULE = 'async_hooks';
 
 /**
@@ -116,11 +101,7 @@ export class LangSmithPlugin extends SimplePlugin {
   private readonly configJson: string;
 
   constructor(options: LangSmithPluginOptions = {}) {
-    // The plugin name is carried by the base class (LangSmith Cloud groups
-    // telemetry by this string). It MUST be passed through `super(...)`: the
-    // base constructor reads `options.name` immediately, so a `readonly name`
-    // field initializer — which runs only *after* `super()` returns — would
-    // leave the base reading `undefined.name` and throw.
+    // super() reads options.name immediately
     super({ name: 'langchain.LangSmithPlugin' });
     this.client = options.client ?? new Client();
     const addTemporalRuns = options.addTemporalRuns ?? false;
@@ -140,11 +121,6 @@ export class LangSmithPlugin extends SimplePlugin {
     this.configJson = JSON.stringify(this.workflowConfig);
   }
 
-  /**
-   * Register the client interceptor that propagates trace context outbound.
-   * Delegates to the base merge first, then appends our workflow client
-   * interceptor onto whatever the user / base already configured.
-   */
   override configureClient(options: ClientOptions): ClientOptions {
     const base = super.configureClient(options);
     const existing = base.interceptors ?? {};
@@ -153,22 +129,14 @@ export class LangSmithPlugin extends SimplePlugin {
     return { ...base, interceptors: { ...existing, workflow } };
   }
 
-  /** Register activity + Nexus inbound interceptors, the workflow module, and the sink. */
   override configureWorker(options: WorkerOptions): WorkerOptions {
     return this.withLangSmithWorker(super.configureWorker(options));
   }
 
-  /** Replay workers need the same workflow interceptors + sinks as live workers. */
   override configureReplayWorker(options: ReplayWorkerOptions): ReplayWorkerOptions {
     return this.withLangSmithWorker(super.configureReplayWorker(options));
   }
 
-  /**
-   * Layer the LangSmith activity/Nexus inbound interceptors, the workflow
-   * interceptor module, and the emission sink onto an already-merged worker
-   * options object. Shared by {@link configureWorker} and
-   * {@link configureReplayWorker} so live and replay workers stay in lockstep.
-   */
   private withLangSmithWorker<T extends WorkerOptions | ReplayWorkerOptions>(options: T): T {
     const interceptors: WorkerInterceptors = options.interceptors ?? {};
 
@@ -204,9 +172,7 @@ export class LangSmithPlugin extends SimplePlugin {
     if (!workflowInterceptorModules.includes(WORKFLOW_INTERCEPTOR_MODULE)) {
       workflowInterceptorModules.push(WORKFLOW_INTERCEPTOR_MODULE);
     }
-    // Dismiss the SDK bundler's disallowed-builtin guard for `async_hooks`; the
-    // webpack rewrite in `aliasAsyncHooks` is what actually keeps it out of the
-    // isolate (see that function for the full rationale).
+    // Dismiss the SDK bundler's disallowed-builtin guard for `async_hooks` (see aliasAsyncHooks).
     const ignoreModules = [...(base.ignoreModules ?? [])];
     if (!ignoreModules.includes(ASYNC_HOOKS_MODULE)) {
       ignoreModules.push(ASYNC_HOOKS_MODULE);
@@ -215,8 +181,7 @@ export class LangSmithPlugin extends SimplePlugin {
     const configJson = this.configJson;
     const webpackConfigHook = (config: WebpackConfiguration): WebpackConfiguration => {
       const merged = prevHook ? prevHook(config) : config;
-      // `JSON.stringify(JSON.stringify(x))` so the injected token is a string
-      // literal in the bundle, parsed back by the workflow module at runtime.
+      // Double-encode so the injected token is a string literal in the bundle.
       const definitions = { [CONFIG_GLOBAL]: JSON.stringify(configJson) };
       const withDefine = injectDefinePlugin(merged, definitions);
       return aliasLangSmithNodeUtils(aliasAsyncHooks(withDefine));
@@ -256,33 +221,13 @@ export class LangSmithPlugin extends SimplePlugin {
 }
 
 /**
- * Redirect `node:async_hooks` to the workflow interceptor module so LangSmith's
- * `import { AsyncLocalStorage } from "node:async_hooks"` resolves to our
- * isolate-safe shim.
- *
- * `resolve.alias` does **not** work for this: webpack routes `node:`-scheme
- * requests through a dedicated scheme handler that runs before alias
- * resolution, so an aliased scheme request still raises `UnhandledSchemeError`.
- * `NormalModuleReplacementPlugin` instead rewrites the request in
- * `beforeResolve` — before scheme detection — turning it into an ordinary path
- * request that resolves normally.
- *
- * This rewrite is one half of a two-part fix; the other half is whitelisting
- * `async_hooks` in `ignoreModules` (see {@link LangSmithPlugin.configureBundler}).
- * The rewrite makes webpack *resolve* the request to our shim, but the SDK's
- * separate `captureProblematicModules` guard inspects the original dependency
- * request and would still abort the build on the disallowed `async_hooks`
- * builtin; `ignoreModules` dismisses that guard. Both are required.
- *
- * The rewrite target is the package specifier
- * `@temporalio/langsmith/workflow-interceptors` — **not** a path relative to
- * this file. The plugin runs from `lib/` (compiled) in production but from
- * `src/` under the test runner, where a relative `./workflow-interceptors.js`
- * would not exist and the rewrite would be silently dropped (the very bug that
- * left workflow-body `traceable` untested in an earlier revision). The package
- * specifier resolves identically from any issuer to the same compiled module
- * the `workflowModules` entry uses, so webpack keeps a single deduped instance
- * in the isolate — one shared context manager, no split state.
+ * Redirect `node:async_hooks` to the workflow interceptor module's isolate-safe
+ * shim. webpack routes `node:` requests through a scheme handler before alias
+ * resolution, so `resolve.alias` cannot do this; `NormalModuleReplacementPlugin`
+ * rewrites the request in `beforeResolve` instead. Must be paired with the
+ * `ignoreModules` whitelist (see {@link LangSmithPlugin.configureBundler}). The
+ * rewrite target is the package specifier so webpack dedupes to one isolate
+ * instance regardless of issuer.
  */
 function aliasAsyncHooks(config: WebpackConfiguration): WebpackConfiguration {
   const plugins = [...(config.plugins ?? [])];
@@ -303,12 +248,9 @@ function aliasAsyncHooks(config: WebpackConfiguration): WebpackConfiguration {
 }
 
 /**
- * Redirect langsmith's node-only CJS utilities (`utils/fs.cjs`,
- * `utils/worker_threads.cjs`) to its own isolate-safe `.browser.cjs` siblings, so
- * the workflow bundle does not pull `node:fs`/`node:path`/`node:worker_threads`
- * into the V8 isolate. langsmith's `browser` field declares this same swap but
- * only for its ESM modules, not the `.cjs` files webpack resolves here. Scoped to
- * langsmith so a user's own `fs.cjs` is never rewritten.
+ * Redirect langsmith's node-only CJS utilities to its `.browser.cjs` siblings so
+ * the workflow bundle keeps node builtins out of the isolate. Scoped to langsmith
+ * so a user's own `fs.cjs` is never rewritten.
  */
 function aliasLangSmithNodeUtils(config: WebpackConfiguration): WebpackConfiguration {
   const plugins = [...(config.plugins ?? [])];

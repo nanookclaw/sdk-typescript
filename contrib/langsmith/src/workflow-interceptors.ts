@@ -1,19 +1,9 @@
 /**
  * Workflow-isolate interceptors and the deterministic LangSmith context
- * provider. This module is loaded into the workflow bundle (via the plugin's
- * `workflowModules`) and runs entirely inside the V8 isolate.
- *
- * Responsibilities:
- *  - Install a workflow-safe replacement for LangSmith's async-context store.
- *    Inside the isolate `node:async_hooks` is unavailable, so LangSmith's
- *    default provider degrades to a mock whose `getStore()` is always
- *    `undefined` and native `traceable` cannot find its parent. We install a
- *    synchronous stack-based provider so `traceable` nests correctly.
- *  - Inbound: open a `RunWorkflow:` / `Handle*:` span (when `addTemporalRuns`)
- *    parented under the propagated trace, install it as the ambient run, and
- *    close it when the call returns.
- *  - Outbound: emit the peer/parent marker run and inject the trace header so
- *    the downstream operation nests correctly.
+ * provider. Loaded into the workflow bundle (via the plugin's `workflowModules`)
+ * and runs entirely inside the V8 isolate, where `node:async_hooks` is
+ * unavailable so a synchronous stack-based context provider stands in for
+ * LangSmith's async-context store.
  *
  * @module
  */
@@ -92,16 +82,12 @@ function readConfig(): WorkflowLangSmithConfig {
 }
 
 /**
- * Synchronous, isolate-safe replacement for LangSmith's async-context store.
- *
- *  - `workflowAmbient` persists across `await` boundaries for the lifetime of
- *    the workflow / handler call.
- *  - `stack` tracks synchronous `traceable` nesting via save/restore around
- *    `run()`, so the common `return await inner(...)` pattern nests correctly.
- *
- * Under `Promise.all` fan-out, or `traceable` calls made *after* an `await` in
- * the same scope, parenting falls back to the workflow ambient — permissible
- * non-determinism that affects only the trace shape, never workflow history.
+ * Synchronous, isolate-safe replacement for LangSmith's async-context store,
+ * shared by the installed provider, the {@link AsyncLocalStorage} shim, and
+ * every interceptor so they all read and write one store. `workflowAmbient`
+ * persists across `await` boundaries; `stack` tracks synchronous `traceable`
+ * nesting. Under `Promise.all` fan-out parenting falls back to the ambient —
+ * trace-shape-only non-determinism, never workflow history.
  */
 class WorkflowContextManager {
   private workflowAmbient: RunTree | undefined;
@@ -157,31 +143,14 @@ function ensureProviderInstalled(manager: WorkflowContextManager): void {
   } as Parameters<typeof AsyncLocalStorageProviderSingleton.initializeGlobalInstance>[0]);
 }
 
-/**
- * Module-level singleton context manager, shared within a single Workflow
- * Execution by the installed LangSmith provider, the {@link AsyncLocalStorage}
- * shim below, and every inbound/outbound interceptor created by
- * {@link interceptors}. One shared instance keeps the provider's `getStore()`
- * and the interceptors' `withAmbient()` reading and writing the same store, so a
- * workflow-body `traceable` resolves its parent through the same context the
- * interceptors install.
- */
 const sharedManager = new WorkflowContextManager();
 ensureProviderInstalled(sharedManager);
 
 /**
  * Isolate-safe stand-in for Node's `AsyncLocalStorage`. The plugin's bundler
- * aliases `node:async_hooks` (which does not exist in the V8 isolate) to this
- * module, so a user workflow body that imports `langsmith/traceable` resolves
- * LangSmith's `import { AsyncLocalStorage } from "node:async_hooks"` — and the
- * `new AsyncLocalStorage()` it constructs at module load — to this class instead
- * of failing the webpack build.
- *
- * Every instance delegates to {@link sharedManager}. This makes the
- * first-install-wins race between LangSmith (which calls
- * `initializeGlobalInstance(new AsyncLocalStorage())` at its module load) and
- * the plugin (which calls `ensureProviderInstalled` above) irrelevant: whichever
- * runs first, the registered provider is backed by the same deterministic store.
+ * aliases `node:async_hooks` (absent in the isolate) to this module so
+ * LangSmith's `import { AsyncLocalStorage } from "node:async_hooks"` resolves
+ * here. Every instance delegates to {@link sharedManager}.
  */
 export class AsyncLocalStorage<T = unknown> {
   getStore(): T | undefined {
@@ -445,11 +414,8 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
     input: ContinueAsNewInput,
     next: Next<WorkflowOutboundCallsInterceptor, 'continueAsNew'>
   ): Promise<never> {
-    // No run is emitted for continue-as-new (matching the Python plugin); only
-    // the ambient trace context is propagated so the successor stays on the
-    // trace. A synthetic root is never emitted, so propagating it would dangle
-    // the successor's runs under a parent that does not exist — propagate nothing
-    // and let the successor install its own fresh synthetic root.
+    // Don't propagate a synthetic root: it is never emitted, so the successor's
+    // runs would dangle under a nonexistent parent. Let it install its own.
     const ambient = this.ctx.ambient();
     const context = ambient instanceof _RootReplaySafeRunTreeFactory ? undefined : runHeaders(ambient);
     const headers = withContextHeader(input.headers, context);
