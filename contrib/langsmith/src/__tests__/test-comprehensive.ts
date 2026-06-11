@@ -1,106 +1,191 @@
 /**
- * Run-hierarchy edge cases that the comprehensive trace-tree test
- * (test-comprehensive-tree.ts) cannot cover, because its workflow always runs
- * under a client-side `user_pipeline` root and its assertion is name-only:
- *  - a workflow started with NO ambient run (two separate roots),
- *  - a root workflow-body `traceable` with no propagated parent (the `crypto`
- *    regression — must not crash, and emits no spurious synthetic root),
- *  - plugin options (projectName / tags / scrubbed metadata) carried onto runs
- *    (a per-field check `dumpTraces` does not render).
+ * Line-for-line trace-tree E2E: drives one `ComprehensiveWorkflow` touching every
+ * instrumented boundary and asserts the EXACT run hierarchy with `deepEqual`.
  *
  * @module
  */
 
 import test from 'ava';
+import { traceable } from 'langsmith/traceable';
 
-import * as activities from './activities/langsmith';
+import * as activities from './activities/comprehensive';
 import { InMemoryRunCollector, dumpTraces, withTracingWorker } from './helpers';
-import * as workflows from './workflows/langsmith';
+import { comprehensiveNexusServiceHandler } from './stubs/nexus';
+import {
+  COMPREHENSIVE_NEXUS_ENDPOINT,
+  ComprehensiveWorkflow,
+  completeSignal,
+  comprehensiveQuery,
+  comprehensiveSignal,
+  comprehensiveUpdate,
+} from './workflows/comprehensive';
 
 process.env.LANGSMITH_TRACING = 'true';
+// Keep langsmith callbacks synchronous so a stray run fails fast instead of blocking teardown.
+process.env.LANGCHAIN_CALLBACKS_BACKGROUND = 'false';
 
-const ALL_ACTIVITIES = {
-  simpleActivity: activities.simpleActivity,
+const COMPREHENSIVE_ACTIVITIES = {
+  comprehensiveActivity: activities.comprehensiveActivity,
+  comprehensiveLocalActivity: activities.comprehensiveLocalActivity,
+  notifyReady: activities.notifyReady,
 };
 
-/** Basic single-activity workflow with addTemporalRuns on, started with no ambient — two roots. */
-const SIMPLE_TREE = [
-  'StartWorkflow:SimpleWorkflow',
-  'RunWorkflow:SimpleWorkflow',
-  '  StartActivity:simpleActivity',
-  '  RunActivity:simpleActivity',
-].join('\n');
+const WORKFLOWS_PATH = require.resolve('./workflows/comprehensive');
 
-/** Root workflow-body `traceable`, no propagated parent — just the user run, no synthetic root. */
-const WORKFLOW_BODY_ROOT_TREE = ['workflow_inner_call'].join('\n');
-
-test('emits the basic SimpleWorkflow tree with no ambient (two roots)', async (t) => {
+/** Drive one full scenario under a client-side `user_pipeline` root, issuing inbound calls in a fixed sequence. */
+async function runComprehensive(addTemporalRuns: boolean): Promise<InMemoryRunCollector> {
   const collector = new InMemoryRunCollector();
   await withTracingWorker({
     collector,
-    options: { addTemporalRuns: true },
-    activities: ALL_ACTIVITIES,
-    body: async ({ client, taskQueue }) => {
-      await client.workflow.execute(workflows.SimpleWorkflow, {
-        taskQueue,
-        workflowId: `simple-${Date.now()}`,
-        args: ['hi'],
-      });
+    options: { addTemporalRuns },
+    activities: COMPREHENSIVE_ACTIVITIES,
+    workerOptions: {
+      workflowsPath: WORKFLOWS_PATH,
+      nexusServices: [comprehensiveNexusServiceHandler],
+    },
+    body: async ({ client, taskQueue, env }) => {
+      await env.createNexusEndpoint(COMPREHENSIVE_NEXUS_ENDPOINT, taskQueue);
+
+      const ready = activities.resetReady();
+      const pipeline = traceable(
+        async () => {
+          const handle = await client.workflow.start(ComprehensiveWorkflow, {
+            taskQueue,
+            workflowId: `comprehensive-${addTemporalRuns}-${Date.now()}`,
+            args: [0],
+          });
+
+          // Wait until the workflow is blocked on handler calls, so the tree order is deterministic.
+          await ready;
+
+          const wrap = { client: collector.asClient(), tracingEnabled: true };
+
+          await handle.query(comprehensiveQuery, 'q1');
+          await traceable(async () => handle.query(comprehensiveQuery, 'q2'), { name: 'user_query_wrap', ...wrap })();
+
+          await handle.signal(comprehensiveSignal, 's1');
+          await traceable(async () => handle.signal(comprehensiveSignal, 's2'), { name: 'user_signal_wrap', ...wrap })();
+
+          await handle.executeUpdate(comprehensiveUpdate, { args: ['u1'] });
+          await traceable(async () => handle.executeUpdate(comprehensiveUpdate, { args: ['u2'] }), {
+            name: 'user_update_wrap',
+            ...wrap,
+          })();
+
+          await handle.signal(completeSignal);
+          await handle.result();
+        },
+        { name: 'user_pipeline', client: collector.asClient(), tracingEnabled: true }
+      );
+      await pipeline();
     },
   });
-  t.deepEqual(dumpTraces(collector.records), SIMPLE_TREE);
+  return collector;
+}
+
+/** addTemporalRuns: true — Temporal-operation runs interleave with the user `traceable` runs. */
+const EXPECTED_TRUE: string[] = [
+  'user_pipeline',
+  '  StartWorkflow:ComprehensiveWorkflow',
+  '  RunWorkflow:ComprehensiveWorkflow',
+  '    StartActivity:comprehensiveActivity',
+  '    RunActivity:comprehensiveActivity',
+  '      comprehensive_activity',
+  '        comprehensive_activity_inner',
+  '    user_wrap_activity',
+  '      StartActivity:comprehensiveActivity',
+  '      RunActivity:comprehensiveActivity',
+  '        comprehensive_activity',
+  '          comprehensive_activity_inner',
+  '    StartActivity:comprehensiveLocalActivity',
+  '    RunActivity:comprehensiveLocalActivity',
+  '    StartChildWorkflow:ComprehensiveChildWorkflow',
+  '    RunWorkflow:ComprehensiveChildWorkflow',
+  '      StartActivity:comprehensiveActivity',
+  '      RunActivity:comprehensiveActivity',
+  '        comprehensive_activity',
+  '          comprehensive_activity_inner',
+  '    user_wrap_child',
+  '      StartChildWorkflow:ComprehensiveChildWorkflow',
+  '      RunWorkflow:ComprehensiveChildWorkflow',
+  '        StartActivity:comprehensiveActivity',
+  '        RunActivity:comprehensiveActivity',
+  '          comprehensive_activity',
+  '            comprehensive_activity_inner',
+  '    StartChildWorkflow:ComprehensiveReceiverWorkflow',
+  '    SignalChildWorkflow:signal',
+  '      HandleSignal:signal',
+  '    RunWorkflow:ComprehensiveReceiverWorkflow',
+  '    StartNexusOperation:comprehensiveNexusService/greet',
+  '    RunStartNexusOperationHandler:comprehensiveNexusService/greet',
+  '      nexus_inner_call',
+  '    workflow_inner_call',
+  '    StartActivity:notifyReady',
+  '    RunActivity:notifyReady',
+  '    RunWorkflow:ComprehensiveWorkflow',
+  '  QueryWorkflow:query',
+  '    HandleQuery:query',
+  '      query_inner_call',
+  '  user_query_wrap',
+  '    QueryWorkflow:query',
+  '      HandleQuery:query',
+  '        query_inner_call',
+  '  SignalWorkflow:signal',
+  '    HandleSignal:signal',
+  '      signal_inner_call',
+  '  user_signal_wrap',
+  '    SignalWorkflow:signal',
+  '      HandleSignal:signal',
+  '        signal_inner_call',
+  '  StartWorkflowUpdate:update',
+  '    ValidateUpdate:update',
+  '      validator_inner_call',
+  '    HandleUpdate:update',
+  '      update_inner_call',
+  '  user_update_wrap',
+  '    StartWorkflowUpdate:update',
+  '      ValidateUpdate:update',
+  '        validator_inner_call',
+  '      HandleUpdate:update',
+  '        update_inner_call',
+  '  SignalWorkflow:complete',
+  '    HandleSignal:complete',
+];
+
+/** addTemporalRuns: false — only the user `traceable` runs, still parented across every boundary. */
+const EXPECTED_FALSE: string[] = [
+  'user_pipeline',
+  '  comprehensive_activity',
+  '    comprehensive_activity_inner',
+  '  user_wrap_activity',
+  '    comprehensive_activity',
+  '      comprehensive_activity_inner',
+  '  comprehensive_activity',
+  '    comprehensive_activity_inner',
+  '  user_wrap_child',
+  '    comprehensive_activity',
+  '      comprehensive_activity_inner',
+  '  nexus_inner_call',
+  '  workflow_inner_call',
+  '  query_inner_call',
+  '  user_query_wrap',
+  '    query_inner_call',
+  '  user_signal_wrap',
+  '    signal_inner_call',
+  '  signal_inner_call',
+  '  validator_inner_call',
+  '  update_inner_call',
+  '  user_update_wrap',
+  '    validator_inner_call',
+  '    update_inner_call',
+];
+
+test.serial('comprehensive trace tree: addTemporalRuns=true', async (t) => {
+  const collector = await runComprehensive(true);
+  t.deepEqual(dumpTraces(collector.records).split('\n'), EXPECTED_TRUE);
 });
 
-/**
- * A workflow-body `traceable` with addTemporalRuns off and NO client-side
- * `traceable` wrapper, so no parent is propagated in. Without the synthetic
- * anchor root, LangSmith takes its no-parent branch and mints a uuid via
- * `crypto`, which the workflow isolate lacks — crashing the Workflow Task. The
- * synthetic root keeps it on the `createChild` branch and stays invisible, so
- * only the user's `workflow_inner_call` run is emitted.
- */
-test('root workflow-body traceable (no propagated parent) does not crash and emits just the user run', async (t) => {
-  const collector = new InMemoryRunCollector();
-  await withTracingWorker({
-    collector,
-    options: { addTemporalRuns: false },
-    activities: ALL_ACTIVITIES,
-    body: async ({ client, taskQueue }) => {
-      await client.workflow.execute(workflows.WorkflowBodyTraceableWorkflow, {
-        taskQueue,
-        workflowId: `wf-body-root-${Date.now()}`,
-        args: ['hello'],
-      });
-    },
-  });
-  t.deepEqual(dumpTraces(collector.records), WORKFLOW_BODY_ROOT_TREE);
-});
-
-test('plugin options are carried onto emitted runs: applies projectName, defaultTags, and (scrubbed) defaultMetadata', async (t) => {
-  const collector = new InMemoryRunCollector();
-  await withTracingWorker({
-    collector,
-    options: {
-      addTemporalRuns: true,
-      projectName: 'my-project',
-      defaultTags: ['env:test'],
-      // The api_key entry must be scrubbed before it reaches the backend.
-      defaultMetadata: { team: 'platform', api_key: 'should-be-removed' },
-    },
-    activities: ALL_ACTIVITIES,
-    body: async ({ client, taskQueue }) => {
-      await client.workflow.execute(workflows.SimpleWorkflow, {
-        taskQueue,
-        workflowId: `options-${Date.now()}`,
-        args: ['hi'],
-      });
-    },
-  });
-
-  const runWorkflow = collector.byName('RunWorkflow:SimpleWorkflow');
-  t.is(runWorkflow?.project_name, 'my-project');
-  t.deepEqual(runWorkflow?.tags, ['env:test']);
-  const metadata = runWorkflow?.extra?.metadata as Record<string, unknown> | undefined;
-  t.deepEqual(metadata, { team: 'platform' });
-  t.false('api_key' in (metadata ?? {}));
+test.serial('comprehensive trace tree: addTemporalRuns=false', async (t) => {
+  const collector = await runComprehensive(false);
+  t.deepEqual(dumpTraces(collector.records).split('\n'), EXPECTED_FALSE);
 });

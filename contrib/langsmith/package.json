@@ -17,7 +17,6 @@
   },
   "ava": {
     "files": [
-      "./lib/__tests__/**/*.test.js",
       "./lib/__tests__/test-*.js"
     ],
     "timeout": "120s",

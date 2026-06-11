@@ -1,22 +1,17 @@
 /**
- * Error-marking parity with the Python plugin.
- *
- * A non-benign activity failure must surface on the `RunActivity:` run as
- * `"<type>: <message>"`; a `BENIGN`-category `ApplicationFailure` is an expected
- * outcome and must leave the run's `error` unset. Both cases boot a real local
- * Temporal environment and let the activity actually throw.
+ * Error-marking parity with the Python plugin: a non-benign failure surfaces as
+ * `"<type>: <message>"`; a BENIGN `ApplicationFailure` leaves `error` unset.
  *
  * @module
  */
 
-// User opted into tracing by installing the plugin; force the gate on so the
-// activity-side runs emit deterministically regardless of ambient env.
 import test from 'ava';
 
 import * as activities from './activities/langsmith';
 import { InMemoryRunCollector, withTracingWorker } from './helpers';
 import * as workflows from './workflows/langsmith';
 
+// Force the tracing gate on so activity-side runs emit deterministically regardless of ambient env.
 process.env.LANGSMITH_TRACING = 'true';
 
 const ACTIVITIES = {
@@ -66,11 +61,7 @@ test('error marking on activity runs: does NOT mark a BENIGN-category failure as
 });
 
 test('error marking on workflow runs: does NOT mark a workflow that fails with a BENIGN-category failure', async (t) => {
-  // Distinct from the activity-inbound benign path above: this exercises the
-  // *workflow-inbound* error handler, which has its own `describeError` call
-  // site. A workflow that throws a BENIGN `ApplicationFailure` directly (no
-  // activity) is an expected control-flow outcome — the `RunWorkflow:` run
-  // must not be marked errored, or every benign stop would pollute the trace.
+  // Exercises the workflow-inbound error handler (its own `describeError` site), distinct from the activity path above.
   const collector = new InMemoryRunCollector();
   await withTracingWorker({
     collector,

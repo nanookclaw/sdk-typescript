@@ -6,6 +6,9 @@ instrumentation**. Code you already trace with LangSmith's native `traceable`
 keeps working when you move it into a Workflow or Activity body — you only add
 the plugin to your `Client` and `Worker`.
 
+This plugin is built on Temporal's Plugin API, which is experimental; its APIs
+may change in a future release.
+
 It handles the parts that are otherwise hard:
 
 - **Replay safety.** Workflows replay history; a naive tracer re-emits every run

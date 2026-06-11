@@ -1,17 +1,6 @@
 /**
- * Shared test harness for the LangSmith Temporal plugin.
- *
- * The {@link InMemoryRunCollector} satisfies LangSmith's minimal tracing-client
- * interface (`createRun` / `updateRun`). Passing one as the plugin's `client`
- * captures every run the plugin emits from *all three* origins through a single
- * object:
- *  - client-side markers (emitted directly),
- *  - activity-body runs (emitted directly via the real `RunTree` client),
- *  - workflow-body runs (emitted out-of-isolate through the plugin's Sink,
- *    whose worker-side implementation is built from this same client).
- *
- * {@link dumpTraces} renders the collected runs as an indented tree grouped by
- * `parent_run_id`, so a test can assert the exact run hierarchy with `toEqual`.
+ * Shared test harness: {@link InMemoryRunCollector} captures every run the plugin
+ * emits, and {@link dumpTraces} renders them as an indented tree for assertions.
  *
  * @module
  */
@@ -25,6 +14,14 @@ import { LangSmithPlugin, type LangSmithPluginOptions } from '../index';
 
 /** Absolute path to the test workflow bundle (resolved from this module). */
 export const WORKFLOWS_PATH = require.resolve('./workflows/langsmith');
+
+/** Expected tree for `SimpleWorkflow` with `addTemporalRuns: true`: one workflow run and its single activity. */
+export const SIMPLE_TREE = [
+  'StartWorkflow:SimpleWorkflow',
+  'RunWorkflow:SimpleWorkflow',
+  '  StartActivity:simpleActivity',
+  '  RunActivity:simpleActivity',
+].join('\n');
 
 /** A run as captured by {@link InMemoryRunCollector}; superset of create/update fields. */
 export interface CollectedRun {
@@ -44,12 +41,7 @@ export interface CollectedRun {
   events?: unknown[];
 }
 
-/**
- * In-memory stand-in for a LangSmith `Client`. Records every `createRun` in
- * call order and merges subsequent `updateRun`s by id. `createRun` / `updateRun`
- * are arrow properties so `this` stays bound when LangSmith's `RunTree` invokes
- * them through the client reference.
- */
+/** In-memory stand-in for a LangSmith `Client`; records `createRun`s in order and merges `updateRun`s by id. */
 export class InMemoryRunCollector {
   /** Run ids in first-seen (createRun) order. */
   readonly createOrder: string[] = [];
@@ -117,15 +109,7 @@ export class InMemoryRunCollector {
   }
 }
 
-/**
- * Render collected runs as an indented tree grouped by `parent_run_id`.
- *
- *  - de-duplicates by run id (first occurrence wins) so replays collapse,
- *  - orders siblings by createRun insertion order,
- *  - indents two spaces per depth level,
- *  - throws on a dangling `parent_run_id` (a parent that was never collected),
- *    which signals a broken propagation link rather than a real root.
- */
+/** Render collected runs as an indented tree grouped by `parent_run_id`, throwing on a dangling parent. */
 export function dumpTraces(records: CollectedRun[]): string {
   const byId = new Map<string, CollectedRun>();
   const order: string[] = [];
@@ -184,12 +168,7 @@ export interface HarnessArgs<T> {
   body: (ctx: { client: Client; taskQueue: string; env: TestWorkflowEnvironment }) => Promise<T>;
 }
 
-/**
- * Boot a local Temporal test environment with the LangSmith plugin registered
- * on both the client and the worker (in TypeScript these are independent
- * components; the plugin de-duplicates its own interceptors), run `body`, then
- * tear everything down.
- */
+/** Boot a local Temporal env with the plugin on both client and worker, run `body`, then tear down. */
 export async function withTracingWorker<T>(args: HarnessArgs<T>): Promise<T> {
   const env = await TestWorkflowEnvironment.createLocal();
   try {

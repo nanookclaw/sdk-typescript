@@ -1,13 +1,6 @@
 /**
- * The comprehensive trace-tree workflow: a continue-as-new state machine that
- * touches every Temporal boundary the plugin instruments — each raw and wrapped
- * in a user `traceable` — so the test (test-comprehensive-tree.ts) can assert the
- * exact emitted run hierarchy.
- *
- * Every instrumented call in the body and in every handler runs sequentially.
- * The isolate's workflow-body `traceable` parent resolution falls back to the
- * workflow run under concurrency, so a `Promise.all` over instrumented calls
- * would make the tree nondeterministic.
+ * Continue-as-new state machine touching every instrumented Temporal boundary, raw and
+ * `traceable`-wrapped, so test-comprehensive.ts can assert the exact emitted run hierarchy.
  *
  * @module
  */
@@ -54,12 +47,7 @@ const updateInnerCall = traceable(async (input: string): Promise<string> => `upd
   name: 'update_inner_call',
 });
 
-/**
- * Emit a nested user run under the current run, synchronously. Query handlers and
- * update validators must be synchronous, so they cannot use `traceable` (which
- * returns a Promise); this mirrors how a user would hand-instrument a sync
- * handler. A no-op when there is no current run to nest under.
- */
+/** Synchronously emit a nested user run under the current run, for sync handlers that can't use async `traceable`; no-op when there's no current run. */
 function syncInnerRun(name: string): void {
   const parent = getCurrentRunTree(true);
   if (!parent) {
@@ -147,8 +135,7 @@ export async function ComprehensiveWorkflow(iteration: number): Promise<string> 
 
     await workflowInnerCall('h');
 
-    // Outbound boundaries done; release the driver to issue the handler calls,
-    // then wait for its completion signal before continuing as new.
+    // Release the driver to issue handler calls, then await its completion signal before continue-as-new.
     await notifyReady();
     await condition(() => state.done);
     await continueAsNew<typeof ComprehensiveWorkflow>(iteration + 1);
