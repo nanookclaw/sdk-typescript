@@ -1,10 +1,10 @@
 /**
- * Environment kill-switch end-to-end.
+ * Environment tracing gate end-to-end.
  *
  * Tracing is OFF by default and turns on only when a recognized LangSmith
  * tracing env var is explicitly `"true"`. Two suppression paths must emit
  * nothing — no client markers, no workflow-operation runs, no activity runs:
- *  - the explicit kill-switch (`LANGSMITH_TRACING="false"`), and
+ *  - the explicit tracing gate (`LANGSMITH_TRACING="false"`), and
  *  - the default, with no recognized tracing env var set at all.
  * Each boots a real local environment and runs a workflow with no user
  * `traceable` anywhere, so an empty collector proves the plugin itself emitted
@@ -59,7 +59,7 @@ async function runPlainWorkflow(collector: InMemoryRunCollector): Promise<void> 
   });
 }
 
-test.serial('LANGSMITH_TRACING kill-switch: suppresses all emission when tracing is disabled', async (t) => {
+test.serial('LANGSMITH_TRACING=false suppresses all emission', async (t) => {
   const snapshot = snapshotTracingEnv();
   process.env.LANGSMITH_TRACING = 'false';
   try {

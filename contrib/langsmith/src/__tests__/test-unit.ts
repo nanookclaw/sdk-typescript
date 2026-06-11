@@ -1,6 +1,6 @@
 /**
  * Pure-function unit tests. These run with no Temporal server and no LangSmith
- * backend — they exercise the propagation codec, env kill-switch, query filter,
+ * backend — they exercise the propagation codec, env tracing gate, query filter,
  * sensitive-key scrubbing, error rendering, run-name builders, and the test
  * harness's own collector / tree renderer.
  *

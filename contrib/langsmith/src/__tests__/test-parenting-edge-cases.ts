@@ -17,7 +17,7 @@ const ALL_ACTIVITIES = {
   simpleActivity: activities.simpleActivity,
 };
 
-/** Root workflow-body `traceable`, no propagated parent — just the user run, no synthetic root. */
+/** Root workflow-body `traceable`, no propagated parent — just the user run, no placeholder root. */
 const WORKFLOW_BODY_ROOT_TREE = ['workflow_inner_call'].join('\n');
 
 test('emits the basic SimpleWorkflow tree with no ambient (two roots)', async (t) => {
@@ -37,7 +37,7 @@ test('emits the basic SimpleWorkflow tree with no ambient (two roots)', async (t
   t.deepEqual(dumpTraces(collector.records), SIMPLE_TREE);
 });
 
-// No propagated parent: the synthetic root keeps LangSmith off its `crypto`-minting branch (absent in the isolate).
+// No propagated parent: the placeholder root keeps LangSmith off its `crypto`-minting branch (absent in the isolate).
 test('root workflow-body traceable (no propagated parent) does not crash and emits just the user run', async (t) => {
   const collector = new InMemoryRunCollector();
   await withTracingWorker({

@@ -76,7 +76,7 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
     return next({ ...input, headers });
   };
 
-  const parentMessage = async <I extends WithHeaders, O>(input: I, next: NextFn<I, O>, name: string): Promise<O> => {
+  const parentMarker = async <I extends WithHeaders, O>(input: I, next: NextFn<I, O>, name: string): Promise<O> => {
     if (!isTracingEnabled()) {
       return next(input);
     }
@@ -105,19 +105,19 @@ export function createClientInterceptor(config: EmitterConfig): Record<string, u
       return peerStart(input, next, startWorkflowRunName(input.workflowType));
     },
     signal(input: SignalInput, next: NextFn<SignalInput, void>): Promise<void> {
-      return parentMessage(input, next, signalWorkflowRunName(input.signalName));
+      return parentMarker(input, next, signalWorkflowRunName(input.signalName));
     },
     signalWithStart(input: SignalWithStartInput, next: NextFn<SignalWithStartInput, string>): Promise<string> {
-      return parentMessage(input, next, signalWithStartRunName(input.workflowType));
+      return parentMarker(input, next, signalWithStartRunName(input.workflowType));
     },
     query(input: QueryInput, next: NextFn<QueryInput, unknown>): Promise<unknown> {
-      return parentMessage(input, next, queryWorkflowRunName(input.queryType));
+      return parentMarker(input, next, queryWorkflowRunName(input.queryType));
     },
     startUpdate(input: UpdateInput, next: NextFn<UpdateInput, unknown>): Promise<unknown> {
-      return parentMessage(input, next, startWorkflowUpdateRunName(updateName(input)));
+      return parentMarker(input, next, startWorkflowUpdateRunName(updateName(input)));
     },
     startUpdateWithStart(input: UpdateInput, next: NextFn<UpdateInput, unknown>): Promise<unknown> {
-      return parentMessage(input, next, startUpdateWithStartRunName(updateName(input)));
+      return parentMarker(input, next, startUpdateWithStartRunName(updateName(input)));
     },
     terminate<I, O>(input: I, next: NextFn<I, O>): Promise<O> {
       return next(input);

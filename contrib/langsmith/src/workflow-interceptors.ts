@@ -83,7 +83,7 @@ export interface WorkflowLangSmithConfig {
 
 // Injected at bundle time by the plugin's DefinePlugin. Declared so the bare
 // identifier is replaced textually (avoids the dotted-access DefinePlugin
-// footgun). Absent in environments that bundled without the plugin.
+// pitfall). Absent in environments that bundled without the plugin.
 declare const __TEMPORAL_LANGSMITH_CONFIG__: string | undefined;
 
 function readConfig(): WorkflowLangSmithConfig {
@@ -203,7 +203,7 @@ function reconstructParent(headers: Record<string, unknown> | undefined): RunTre
  * replay-safe children. Carries the same id/trace/dotted so descendants parent
  * under the real propagated run; never emitted itself.
  */
-function asReplaySafeAnchor(parent: RunTree | undefined, random?: () => number): ReplaySafeRunTree | undefined {
+function asReplaySafeParent(parent: RunTree | undefined, random?: () => number): ReplaySafeRunTree | undefined {
   if (!parent) {
     return undefined;
   }
@@ -222,11 +222,11 @@ function asReplaySafeAnchor(parent: RunTree | undefined, random?: () => number):
 }
 
 /**
- * A synthetic anchor for the no-propagated-parent case. Installed as the ambient
+ * A placeholder parent for the no-propagated-parent case. Installed as the ambient
  * so a workflow-body `traceable` always nests via `createChild`; never emitted,
  * and its children are independent roots (see {@link _RootReplaySafeRunTreeFactory}).
  */
-function syntheticRoot(random?: () => number): _RootReplaySafeRunTreeFactory {
+function placeholderRoot(random?: () => number): _RootReplaySafeRunTreeFactory {
   return new _RootReplaySafeRunTreeFactory(
     { name: workflowInfo().workflowType, run_type: RUN_TYPE.CHAIN },
     random
@@ -249,7 +249,7 @@ function buildReplaySafeRunTree(
   params: {
     name: string;
     runType: string;
-    anchor: ReplaySafeRunTree | undefined;
+    parent: ReplaySafeRunTree | undefined;
     inputs: Record<string, unknown>;
     random?: () => number;
   }
@@ -258,7 +258,7 @@ function buildReplaySafeRunTree(
     {
       name: params.name,
       run_type: params.runType,
-      parent_run: params.anchor,
+      parent_run: params.parent,
       project_name: config.projectName,
       tags: config.defaultTags,
       extra: { metadata: config.defaultMetadata },
@@ -335,21 +335,19 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
     // draws from the Workflow main PRNG (which a clean replay would not advance).
     const random = prngFromInputId(input.updateId);
     if (!this.config.addTemporalRuns) {
-      // Propagation only: install the reconstructed parent (or a synthetic anchor
+      // Propagation only: install the reconstructed parent (or a placeholder parent
       // when none was propagated, to keep a validator-body `traceable` off the
       // no-parent `crypto` path) so the validator body nests under the update's
       // trace. Validators are synchronous, so install via the stack-based `run`,
       // not the async `withAmbient`.
-      const ambient = asReplaySafeAnchor(reconstructParent(input.headers), random) ?? syntheticRoot(random);
+      const ambient = asReplaySafeParent(reconstructParent(input.headers), random) ?? placeholderRoot(random);
       this.ctx.run(ambient, () => next(input));
       return;
     }
-    const parent = reconstructParent(input.headers);
-    const anchor = asReplaySafeAnchor(parent, random);
     const run = buildReplaySafeRunTree(this.config, {
       name: validateUpdateRunName(input.name),
       runType: RUN_TYPE.CHAIN,
-      anchor,
+      parent: asReplaySafeParent(reconstructParent(input.headers), random),
       inputs: { args: input.args },
       random,
     });
@@ -388,15 +386,20 @@ class LangSmithWorkflowInbound implements WorkflowInboundCallsInterceptor {
     if (!this.config.addTemporalRuns) {
       // Propagation only: install the reconstructed parent as the active run so
       // user `traceable` runs nest under it; never emit a Temporal-operation run.
-      // With no propagated parent, install a synthetic anchor instead of
+      // With no propagated parent, install a placeholder parent instead of
       // `undefined` so a workflow-body `traceable` takes LangSmith's
       // `createChild` branch (deterministic id) rather than the no-parent branch
       // that mints a uuid via `crypto`, which the isolate lacks.
-      const ambient = asReplaySafeAnchor(parent, random) ?? syntheticRoot(random);
+      const ambient = asReplaySafeParent(parent, random) ?? placeholderRoot(random);
       return scoped ? this.ctx.run(ambient, next) : this.ctx.withAmbient(ambient, next);
     }
-    const anchor = asReplaySafeAnchor(parent, random);
-    const run = buildReplaySafeRunTree(this.config, { name, runType, anchor, inputs, random });
+    const run = buildReplaySafeRunTree(this.config, {
+      name,
+      runType,
+      parent: asReplaySafeParent(parent, random),
+      inputs,
+      random,
+    });
     await run.postRun();
     const body = async (): Promise<unknown> => {
       try {
@@ -451,7 +454,7 @@ class LangSmithWorkflowOutbound implements WorkflowOutboundCallsInterceptor {
     input: ContinueAsNewInput,
     next: Next<WorkflowOutboundCallsInterceptor, 'continueAsNew'>
   ): Promise<never> {
-    // Don't propagate a synthetic root: it is never emitted, so the successor's
+    // Don't propagate a placeholder root: it is never emitted, so the successor's
     // runs would dangle under a nonexistent parent. Let it install its own.
     const ambient = this.ctx.ambient();
     const context = ambient instanceof _RootReplaySafeRunTreeFactory ? undefined : runHeaders(ambient);

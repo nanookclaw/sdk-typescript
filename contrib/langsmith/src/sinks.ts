@@ -92,7 +92,7 @@ export function createLangSmithSinks(client: Client): InjectedSinks<LangSmithSin
     langsmith: {
       createRun: {
         fn: (_info, run) => {
-          // Honor the LangSmith kill-switch at the real-env emission point.
+          // Honor the LangSmith tracing gate at the real-env emission point.
           if (!isTracingEnabled()) {
             return;
           }

@@ -12,7 +12,7 @@ export async function simpleActivity(input: string): Promise<string> {
 }
 
 /**
- * A plain activity with no `traceable` in its body — used by the kill-switch and
+ * A plain activity with no `traceable` in its body — used by the tracing gate and
  * `addTemporalRuns: false` tests where any emitted run must come solely from the
  * plugin, never from user instrumentation.
  */

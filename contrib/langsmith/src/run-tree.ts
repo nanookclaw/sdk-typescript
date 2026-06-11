@@ -202,7 +202,7 @@ interface RunTreeParams {
 
 /**
  * Build an emitter-side {@link RunTree} (client / activity / Nexus); force-enables
- * tracing so nested body `traceable` runs emit — kill switch is `isTracingEnabled()`.
+ * tracing so nested body `traceable` runs emit — tracing gate is `isTracingEnabled()`.
  */
 export function buildRunTree(config: EmitterConfig, params: RunTreeParams): RunTree {
   return new RunTree({
@@ -308,7 +308,7 @@ export class ReplaySafeRunTree extends RunTree {
 }
 
 /**
- * A synthetic, never-emitted anchor whose {@link createChild} produces
+ * A placeholder, never-emitted parent whose {@link createChild} produces
  * independent root children. Installed as the ambient so a workflow-body
  * `traceable` takes LangSmith's `createChild` branch (deterministic id) instead
  * of the no-parent branch that mints a uuid via `crypto`, which the isolate lacks.

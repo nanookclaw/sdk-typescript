@@ -53,9 +53,9 @@ test('continue-as-new: keeps the successor on the same trace with a distinct run
 
 // With `addTemporalRuns: false` and no client-side `traceable` wrapping the
 // start, nothing is propagated into the workflow, so the inbound installs a
-// synthetic root that is never emitted. The `continueAsNew` interceptor must
+// placeholder root that is never emitted. The `continueAsNew` interceptor must
 // therefore propagate no trace context, letting the successor install its own
-// fresh synthetic root so its user `traceable` run stays a proper root instead
+// fresh placeholder root so its user `traceable` run stays a proper root instead
 // of dangling under the predecessor's never-emitted parent.
 test('continue-as-new: successor user runs stay roots when no parent was propagated', async (t) => {
   const collector = new InMemoryRunCollector();
@@ -74,7 +74,7 @@ test('continue-as-new: successor user runs stay roots when no parent was propaga
   const inner = collector.byName('workflow_inner_call');
   t.truthy(inner);
   // The successor's user run is a real root, not dangling under the
-  // predecessor's never-emitted synthetic root.
+  // predecessor's never-emitted placeholder root.
   t.is(inner!.parent_run_id, undefined);
   // dumpTraces throws on a dangling parent_run_id; no throw confirms the link.
   t.notThrows(() => dumpTraces(collector.records));

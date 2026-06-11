@@ -45,10 +45,10 @@ interface ActivityInboundInterceptor {
 /**
  * Reconstruct the propagated parent run from a LangSmith trace context, wired to
  * the plugin-configured client so descendant runs emit to the right place. The
- * returned run is an *anchor* — never posted itself — used only as the parent
- * for the operation run (or directly as ambient when `addTemporalRuns` is off).
+ * returned run is the *parent* — never posted itself — used only to parent
+ * the operation run (or directly as ambient when `addTemporalRuns` is off).
  */
-function anchor(config: EmitterConfig, ctx: LangSmithTraceContext | undefined): RunTree | undefined {
+function reconstructParentRun(config: EmitterConfig, ctx: LangSmithTraceContext | undefined): RunTree | undefined {
   const parsed = runTreeFromContext(ctx);
   if (!parsed) {
     return undefined;
@@ -62,7 +62,7 @@ function anchor(config: EmitterConfig, ctx: LangSmithTraceContext | undefined): 
     parent_run_id: parsed.parent_run_id,
     project_name: config.projectName ?? parsed.project_name,
     client: config.client,
-    // Force-enable so nested body `traceable` runs emit; kill switch is `isTracingEnabled()`.
+    // Force-enable so nested body `traceable` runs emit; tracing gate is `isTracingEnabled()`.
     tracingEnabled: true,
   });
 }
@@ -98,7 +98,7 @@ export function createActivityInboundInterceptor(
       if (!isTracingEnabled()) {
         return next(input);
       }
-      const parent = anchor(config, readContextHeader(input.headers));
+      const parent = reconstructParentRun(config, readContextHeader(input.headers));
       if (!config.addTemporalRuns) {
         // Propagation only: nest the user's body `traceable` runs under the
         // reconstructed parent without emitting a Temporal-operation run.
@@ -152,7 +152,7 @@ export function createNexusInboundInterceptor(config: EmitterConfig): NexusInbou
       if (!isTracingEnabled()) {
         return next(input);
       }
-      const parent = anchor(config, nexusContext(input));
+      const parent = reconstructParentRun(config, nexusContext(input));
       if (!config.addTemporalRuns) {
         return parent ? withRunTree(parent, () => next(input)) : next(input);
       }

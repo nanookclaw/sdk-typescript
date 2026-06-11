@@ -42,7 +42,7 @@ export async function WorkflowBodyTraceableWorkflow(input: string): Promise<stri
   return workflowInnerCall(input);
 }
 
-/** No `traceable` anywhere; the kill-switch test proves emission is fully suppressed. */
+/** No `traceable` anywhere; the tracing gate test proves emission is fully suppressed. */
 export async function PlainWorkflow(input: string): Promise<string> {
   return plainActivity(input);
 }
